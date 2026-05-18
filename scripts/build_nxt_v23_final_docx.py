@@ -14,7 +14,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 
-ROOT = Path(r"D:\Workspace\Codex\Crypto trading")
+ROOT = Path(r"D:\Workspace\Codex\Crypto trading ")
 OUT_DIR = ROOT / "outputs" / "nxt_crypto_btc_sol_sui_3y_v23"
 JSON_PATH = OUT_DIR / "nxt_crypto_btc_sol_sui_3y_v23_results.json"
 XLSX_PATH = OUT_DIR / "NXT_Crypto_BTC_SOL_SUI_3Y_V23_Backtest.xlsx"
