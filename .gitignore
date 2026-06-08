@@ -10,6 +10,7 @@ outputs/
 # Environment and secret files
 .env
 .env.*
+!.env.example
 
 # Logs
 *.log

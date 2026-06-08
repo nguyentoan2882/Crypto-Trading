@@ -248,7 +248,7 @@ def backtest_symbol(symbol, candles):
                         pos["tp1Time"] = c["localDate"]
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["tp"] - pos["entry"]) / pos["risk"])
-                    if pos["triggered"] and ssl_flip:
+                    if ssl_flip:
                         exit_price = c["close"]
                         reason = "Runner exit: SSL bearish flip"
             else:
@@ -261,7 +261,7 @@ def backtest_symbol(symbol, candles):
                         pos["tp1Time"] = c["localDate"]
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["entry"] - pos["tp"]) / pos["risk"])
-                    if pos["triggered"] and ssl_flip:
+                    if ssl_flip:
                         exit_price = c["close"]
                         reason = "Runner exit: SSL bullish flip"
             if exit_price is not None:
