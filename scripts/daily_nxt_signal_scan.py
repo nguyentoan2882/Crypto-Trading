@@ -16,7 +16,7 @@ import backtest_nxt31_utc7_latest as base
 ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = ROOT / "outputs" / "daily_nxt_signal_state.json"
 WARMUP_DATE = date(2019, 11, 1)
-SYSTEM_NAME = "NXT v3.3 Native 1D Anti-Reversal Runner A"
+SYSTEM_NAME = "NXT v3.3 Native 1D SSL14 Anti-Reversal Runner A"
 
 
 def load_local_env() -> None:
@@ -128,8 +128,27 @@ def format_price(value: float) -> str:
     return f"{value:.6f}"
 
 
-def scan_symbol(symbol: str, candles: list[dict]) -> dict | None:
+def enrich_ssl14(candles: list[dict]) -> list[dict]:
     candles = base.enrich(candles)
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    high_sma = base.sma(highs, 14)
+    low_sma = base.sma(lows, 14)
+    state = 0
+    for i, c in enumerate(candles):
+        if high_sma[i] is None or low_sma[i] is None:
+            c["ssl"] = None
+            continue
+        if c["close"] > high_sma[i]:
+            state = 1
+        elif c["close"] < low_sma[i]:
+            state = -1
+        c["ssl"] = state
+    return candles
+
+
+def scan_symbol(symbol: str, candles: list[dict]) -> dict | None:
+    candles = enrich_ssl14(candles)
     pos = None
     last_profitable_runner_exit = None
     latest_signal = None
