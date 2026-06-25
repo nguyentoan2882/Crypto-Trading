@@ -62,7 +62,20 @@ def apply_template(target_path: Path, output_path: Path | None = None) -> None:
     template_wb = load_workbook(TEMPLATE)
     target_wb = load_workbook(target_path)
 
-    for sheet_name in ["Summary", "Trades", "BTC", "SOL", "SUI", "Equity Curve", "20K Account", "Assumptions", "Data Quality"]:
+    for sheet_name in [
+        "Summary",
+        "Compounding Summary",
+        "Compounding Yearly",
+        "Compounding Trades",
+        "Trades",
+        "BTC",
+        "SOL",
+        "SUI",
+        "Equity Curve",
+        "20K Account",
+        "Assumptions",
+        "Data Quality",
+    ]:
         if sheet_name in template_wb.sheetnames and sheet_name in target_wb.sheetnames:
             copy_sheet_layout(template_wb[sheet_name], target_wb[sheet_name])
 

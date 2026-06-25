@@ -185,7 +185,7 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
             "distance": dist,
             "ema20": c["ema20"],
             "ema50": c["ema50"],
-            "notes": "Primary NXT v3.3" if signal_type == "Primary" else RULE["name"],
+            "notes": "Primary NXT v3.5" if signal_type == "Primary" else RULE["name"],
         }
     return trades
 

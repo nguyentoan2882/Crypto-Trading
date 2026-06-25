@@ -22,7 +22,7 @@ Copy `.env.example` to `.env`, then fill in:
 ```powershell
 NXT_TELEGRAM_BOT_TOKEN=...
 NXT_TELEGRAM_CHAT_ID=...
-NXT_SYMBOLS=BTCUSDT,SOLUSDT,SUIUSDT
+NXT_SYMBOLS=BTCUSDT,BNBUSDT,SOLUSDT
 NXT_NOTIFY_NO_SIGNAL=1
 NXT_BINANCE_KLINES_URL=https://data-api.binance.vision/api/v3/klines
 ```
@@ -72,7 +72,8 @@ Binance native daily candles close at `07:00` Vietnam time, so `07:10` gives the
 
 ## Notes
 
-- The scanner uses the latest local NXT v3.3 rule family: Binance native 1D candles, Runner A, anti-immediate-reversal, no continuation, no risk-off.
+- The scanner uses the shared local app core in `app\nxt_signal_app.py`, so Telegram and the browser app use the same NXT latest BTC/BNB/SOL logic.
+- The current shared core uses Binance native 1D candles, SSL14, Runner A, profitable-runner anti-immediate-reversal, and LONG-only pullback continuation.
 - Set `NXT_NOTIFY_NO_SIGNAL=0` if you only want Telegram messages when a new entry signal appears.
-- State is saved at `outputs\daily_nxt_signal_state.json` to avoid duplicate alerts for the same signal.
-- Delete that state file only if you intentionally want the scanner to be allowed to resend old latest signals.
+- Signal history is saved at `outputs\nxt_signal_app\signals_history.json`; this also prevents duplicate Telegram alerts for the same signal.
+- Delete that history file only if you intentionally want the scanner/app to be allowed to rediscover and resend old latest signals.
