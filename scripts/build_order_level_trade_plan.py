@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -10,7 +11,10 @@ from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parents[1]
 LATEST_JSON = ROOT / "latest" / "NXT_Latest_NXT35_BTC_BNB_SOL_FundingAdjusted_20K.json"
-LATEST_XLSX = ROOT / "latest" / "NXT_Latest_NXT35_BTC_BNB_SOL_FundingAdjusted_20K.xlsx"
+LATEST_XLSX = Path(os.environ.get(
+    "NXT_LATEST_FUNDING_XLSX",
+    ROOT / "latest" / "NXT_Latest_NXT35_BTC_BNB_SOL_FundingAdjusted_20K.xlsx",
+))
 ONE_R_DOLLARS = 1_000
 SHEET_NAME = "Order Plan"
 
@@ -103,9 +107,27 @@ def order_rows_for_trade(global_no: int, trade: dict) -> list[list]:
         f"Close 50% at TP1; target is 2.5 ATR {vals['tpDirection']}.",
         "If TP1 is not hit, this order remains pending until final exit/stop.",
     ])
+    next_order_no = 4
+    if trade.get("earlyBeTriggered"):
+        rows.append(common + [
+            next_order_no,
+            f"{trade.get('earlyBeTime', '')} + next D1",
+            "EARLY_BE_7PCT_MOVE_STOP_TO_ENTRY",
+            vals["stopOrderSide"],
+            "STOP_MARKET reduceOnly",
+            "PROTECT_FULL_POSITION",
+            qty,
+            1.0,
+            "",
+            trade["entryPrice"],
+            "",
+            "A 7% favorable High/Low move occurred before TP1; cancel initial stop and move full-position stop to entry from the next daily candle.",
+            "LONG High trigger = Entry x 1.07; SHORT Low trigger = Entry x 0.93.",
+        ])
+        next_order_no += 1
     if trade.get("tp1Time"):
         rows.append(common + [
-            4,
+            next_order_no,
             trade["tp1Time"],
             "TP1_FILLED_CLOSE_50",
             vals["closeSide"],
@@ -119,8 +141,9 @@ def order_rows_for_trade(global_no: int, trade: dict) -> list[list]:
             "TP1 filled; 50% position closed.",
             "Realized gross +0.8333R before trading cost/funding for this half.",
         ])
+        next_order_no += 1
         rows.append(common + [
-            5,
+            next_order_no,
             trade["tp1Time"],
             "MOVE_STOP_TO_BREAKEVEN",
             vals["stopOrderSide"],
@@ -134,11 +157,11 @@ def order_rows_for_trade(global_no: int, trade: dict) -> list[list]:
             "Cancel initial stop and replace with breakeven stop for remaining 50%.",
             "This is the runner risk-control step after TP1.",
         ])
-        final_order_no = 6
+        final_order_no = next_order_no + 1
         final_qty = half_qty
         final_fraction = 0.5
     else:
-        final_order_no = 4
+        final_order_no = next_order_no
         final_qty = qty
         final_fraction = 1.0
 
@@ -146,7 +169,7 @@ def order_rows_for_trade(global_no: int, trade: dict) -> list[list]:
     if trade["exitReason"] == "Stop loss":
         final_action = "STOP_LOSS_CLOSE"
     elif trade["exitReason"] == "Breakeven stop":
-        final_action = "BREAKEVEN_STOP_CLOSE_RUNNER"
+        final_action = "BREAKEVEN_STOP_CLOSE_RUNNER" if trade.get("tp1Time") else "BREAKEVEN_STOP_CLOSE_FULL"
     elif trade["exitReason"].startswith("Runner exit"):
         final_action = "RUNNER_EXIT_ON_SSL_FLIP"
 
@@ -206,6 +229,10 @@ def main() -> None:
                 ws.cell(row_no, col).value = value
             row_no += 1
     style_sheet(ws)
+    for sheet in wb.worksheets:
+        if sheet.freeze_panes is None:
+            for selection in sheet.sheet_view.selection:
+                selection.pane = None
     wb.save(LATEST_XLSX)
     print(json.dumps({
         "workbook": str(LATEST_XLSX),

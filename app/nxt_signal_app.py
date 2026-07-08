@@ -22,16 +22,15 @@ import backtest_nxt31_utc7_latest as base
 import backtest_nxt32_native_1d_latest as native
 import test_nxt33_long_only_pullback_continuation as cont
 from test_nxt33_ssl14 import enrich_with_ssl_period
+from nxt_tradingview_binance_1d_data import fetch_tradingview_binance_1d
 
 
 APP_DIR = ROOT / "outputs" / "nxt_signal_app"
 HISTORY_PATH = APP_DIR / "signals_history.json"
 SCAN_PATH = APP_DIR / "last_scan.json"
-CACHE_DIR = ROOT / "data_cache" / "binance_spot_1d"
-SYSTEM_NAME = "NXT v3.5 Portfolio BTC+BNB+SOL + Native 1D + SSL14 + Runner A + Anti-Immediate-Reversal + LONG-only Pullback Continuation"
+SYSTEM_NAME = "NXT v3.5 Portfolio BTC+BNB+SOL + TradingView BINANCE native 1D + SSL14 + Runner A + Early-BE 7% + Anti-Immediate-Reversal + LONG-only Pullback Continuation on SSL Bullish Flip"
 SYMBOLS = ["BTCUSDT", "BNBUSDT", "SOLUSDT"]
 WARMUP_DATE = native.WARMUP_DATE
-BINANCE_API = os.environ.get("NXT_BINANCE_KLINES_URL", "https://data-api.binance.vision/api/v3/klines")
 ONE_R_DOLLARS = float(os.environ.get("NXT_ONE_R_DOLLARS", "1000"))
 
 
@@ -61,61 +60,8 @@ def http_json(url: str, data: dict | None = None) -> object:
     raise RuntimeError(f"HTTP request failed after retries: {url}") from last_error
 
 
-def load_cached_rows(symbol: str) -> list[dict]:
-    path = CACHE_DIR / f"{symbol}.json"
-    if not path.exists():
-        return []
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def save_cached_rows(symbol: str, rows: list[dict]) -> None:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    path = CACHE_DIR / f"{symbol}.json"
-    path.write_text(json.dumps(sorted(rows, key=lambda r: int(r["time"]))), encoding="utf-8")
-
-
-def fetch_native_1d(symbol: str) -> list[dict]:
-    rows = load_cached_rows(symbol)
-    by_time = {int(r["time"]): dict(r) for r in rows}
-    start_ms = ms_at_utc_midnight(WARMUP_DATE)
-    if by_time:
-        start_ms = max(max(by_time) + 86_400_000, start_ms)
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-
-    while start_ms <= now_ms:
-        query = urllib.parse.urlencode({"symbol": symbol, "interval": "1d", "startTime": start_ms, "limit": 1000})
-        batch = http_json(f"{BINANCE_API}?{query}")
-        if not isinstance(batch, list) or not batch:
-            break
-        for row in batch:
-            open_time = int(row[0])
-            if open_time > now_ms:
-                continue
-            by_time[open_time] = {
-                "time": open_time,
-                "open": float(row[1]),
-                "high": float(row[2]),
-                "low": float(row[3]),
-                "close": float(row[4]),
-                "volume": float(row[5]),
-                "closeTime": int(row[6]),
-                "takerBuyBaseVolume": float(row[9]),
-            }
-        next_start = int(batch[-1][0]) + 86_400_000
-        if next_start <= start_ms or next_start > now_ms:
-            break
-        start_ms = next_start
-
-    raw = sorted(by_time.values(), key=lambda r: int(r["time"]))
-    save_cached_rows(symbol, raw)
-    out = []
-    for row in raw:
-        item = dict(row)
-        item["localDate"] = date_label(int(row["time"]))
-        item["closed"] = int(row.get("closeTime", int(row["time"]) + 86_399_999)) <= now_ms
-        if date.fromisoformat(item["localDate"]) >= WARMUP_DATE:
-            out.append(item)
-    return out
+def fetch_daily_candles(symbol: str) -> list[dict]:
+    return fetch_tradingview_binance_1d(symbol, WARMUP_DATE)
 
 
 def load_json(path: Path, default: object) -> object:
@@ -184,6 +130,16 @@ def build_orders(signal: dict) -> list[dict]:
         },
         {
             "step": 4,
+            "action": "EARLY_BE_7PCT",
+            "date": "Next daily candle after 7% favorable move",
+            "orderSide": vals["stop"],
+            "orderType": "STOP_MARKET reduceOnly",
+            "quantityBase": qty,
+            "triggerPrice": signal["entryPrice"],
+            "note": "Before TP1, if LONG High reaches Entry x 1.07 or SHORT Low reaches Entry x 0.93, move the full-position stop to entry from the next daily candle.",
+        },
+        {
+            "step": 5,
             "action": "AFTER_TP1_MOVE_STOP_TO_BREAKEVEN",
             "date": "When TP1 fills",
             "orderSide": vals["stop"],
@@ -193,7 +149,7 @@ def build_orders(signal: dict) -> list[dict]:
             "note": "Cancel initial stop and protect the runner at entry price.",
         },
         {
-            "step": 5,
+            "step": 6,
             "action": "RUNNER_EXIT_ON_OPPOSITE_SSL_FLIP",
             "date": "Future daily close",
             "orderSide": vals["close"],
@@ -224,24 +180,30 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
             if side == "LONG":
                 if c["low"] <= pos["stop"]:
                     exit_price = pos["stop"]
-                    reason = "Breakeven stop" if pos["triggered"] else "Stop loss"
+                    reason = "Breakeven stop" if (pos["triggered"] or pos["earlyBeTriggered"]) else "Stop loss"
                 else:
                     if not pos["triggered"] and c["high"] >= pos["tp"]:
                         pos["triggered"] = True
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["tp"] - pos["entry"]) / pos["risk"])
+                    if not pos["triggered"] and not pos["earlyBeTriggered"] and c["high"] >= pos["entry"] * 1.07:
+                        pos["earlyBeTriggered"] = True
+                        pos["stop"] = pos["entry"]
                     if ssl_flip:
                         exit_price = c["close"]
                         reason = "Runner exit: SSL bearish flip"
             else:
                 if c["high"] >= pos["stop"]:
                     exit_price = pos["stop"]
-                    reason = "Breakeven stop" if pos["triggered"] else "Stop loss"
+                    reason = "Breakeven stop" if (pos["triggered"] or pos["earlyBeTriggered"]) else "Stop loss"
                 else:
                     if not pos["triggered"] and c["low"] <= pos["tp"]:
                         pos["triggered"] = True
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["entry"] - pos["tp"]) / pos["risk"])
+                    if not pos["triggered"] and not pos["earlyBeTriggered"] and c["low"] <= pos["entry"] * 0.93:
+                        pos["earlyBeTriggered"] = True
+                        pos["stop"] = pos["entry"]
                     if ssl_flip:
                         exit_price = c["close"]
                         reason = "Runner exit: SSL bullish flip"
@@ -260,7 +222,7 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
         dist = abs(c["close"] - c["ema50"]) / c["atr14"]
         long_primary = prev["ssl"] == -1 and c["ssl"] == 1 and base.recent_cross(candles, i, "LONG") and dist <= 2 and c["rsi14"] > 50
         short_primary = prev["ssl"] == 1 and c["ssl"] == -1 and base.recent_cross(candles, i, "SHORT") and dist <= 2 and c["rsi14"] < 50
-        long_cont = c["ssl"] == 1 and c["close"] > c["ema20"] > c["ema50"] and cont.touch_reclaim_long(candles, i, cont.RULE["touchLookback"])
+        long_cont = prev["ssl"] == -1 and c["ssl"] == 1 and c["close"] > c["ema20"] > c["ema50"] and cont.touch_reclaim_long(candles, i, cont.RULE["touchLookback"])
         if last_profitable_runner_exit and i - last_profitable_runner_exit["index"] <= 1:
             if (long_primary or long_cont) and last_profitable_runner_exit["side"] == "SHORT":
                 long_primary = long_cont = False
@@ -298,6 +260,7 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
             "risk": risk,
             "tp": latest_signal["tp1"],
             "triggered": False,
+            "earlyBeTriggered": False,
             "realizedR": 0.0,
         }
 
@@ -317,7 +280,7 @@ def scan_and_persist() -> dict:
     errors = []
     for symbol in SYMBOLS:
         try:
-            candles = fetch_native_1d(symbol)
+            candles = fetch_daily_candles(symbol)
             checked.append({"symbol": symbol, "candles": len(candles), "latestDate": candles[-1]["localDate"] if candles else ""})
             signal = latest_signal_for_symbol(symbol, candles)
             if signal and signal["id"] not in existing:

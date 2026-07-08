@@ -3,9 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
-import time
-import urllib.request
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from docx import Document
@@ -20,10 +18,10 @@ import backtest_nxt31_utc7_latest as base
 import backtest_nxt32_native_1d_latest as native
 import test_nxt33_long_only_pullback_continuation as cont
 from test_nxt33_ssl14 import enrich_with_ssl_period
+from nxt_tradingview_binance_1d_data import fetch_tradingview_binance_1d
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CACHE = ROOT / "data_cache" / "binance_spot_1d"
 OUT_DIR = ROOT / "outputs" / "nxt35_btc_bnb_sol_latest"
 OUT_JSON = OUT_DIR / "nxt35_btc_bnb_sol_latest_results.json"
 OUT_XLSX = OUT_DIR / "NXT35_BTC_BNB_SOL_20K.xlsx"
@@ -40,19 +38,20 @@ END_DATE = native.END_DATE
 WARMUP_DATE = native.WARMUP_DATE
 STARTING_EQUITY = 20_000
 ONE_R_DOLLARS = 1_000
-SYSTEM_VERSION = "NXT v3.5 Portfolio BTC+BNB+SOL + Binance Native 1D + SSL14 + Runner A + Anti-Immediate-Reversal + LONG-only Pullback Continuation + No Risk-Off"
+SYSTEM_VERSION = "NXT v3.5 Portfolio BTC+BNB+SOL + TradingView BINANCE native 1D + SSL14 + Runner A + Early-BE 7% + Anti-Immediate-Reversal + LONG-only Pullback Continuation on SSL Bullish Flip + No Risk-Off"
 
 RULES = [
-    "Data: Binance native 1D candles for BTCUSDT, BNBUSDT, and SOLUSDT.",
+    "Data: Binance spot native 1D candles (00:00 UTC session), matching TradingView BINANCE symbols on the 1D timeframe.",
     "ATR14 uses the NXT v3.5 ATR-SMA variant.",
     "SSL Channel: SMA(high,14) and SMA(low,14); state flips bullish when close is above high SMA and bearish when close is below low SMA.",
     "Primary LONG: SSL flips bullish, price crosses above EMA20 within the last 3 candles, distance from close to EMA50 <= 2 ATR14, and RSI14 > 50.",
     "Primary SHORT: SSL flips bearish, price crosses below EMA20 within the last 3 candles, distance from close to EMA50 <= 2 ATR14, and RSI14 < 50.",
-    "Continuation LONG: SSL is bullish, close > EMA20 > EMA50, low touched EMA20 within the last 5 candles, close > EMA20, and close > previous close.",
+    "Continuation LONG: SSL flips bullish on the signal candle, close > EMA20 > EMA50, low touched EMA20 within the last 5 candles, close > EMA20, and close > previous close.",
     "Continuation is LONG-only; SHORT continuation is disabled.",
     "Continuation does not require RSI, distance-to-EMA50, or EMA50 slope filters.",
     "Anti-immediate-reversal: after a profitable runner exits by opposite SSL flip, block an opposite-direction entry on the exit candle and the next candle.",
     "Initial stop: 1.5 ATR14 from entry.",
+    "Early-BE 7%: before TP1, if LONG High reaches entry x 1.07 or SHORT Low reaches entry x 0.93, move the full-position stop to entry starting from the next daily candle.",
     "TP1: 2.5 ATR14 from entry; close 50% at TP1.",
     "Runner A: after TP1, move remaining 50% stop to breakeven and exit runner on opposite SSL flip or breakeven stop.",
     "Risk-off overlay is disabled.",
@@ -61,64 +60,15 @@ RULES = [
 ]
 
 
-def date_label(ms: int) -> str:
-    return datetime.fromtimestamp(ms / 1000, timezone.utc).date().isoformat()
-
-
-def fetch_binance_native_1d(symbol: str) -> list[dict]:
-    CACHE.mkdir(parents=True, exist_ok=True)
-    path = CACHE / f"{symbol}.json"
-    if path.exists():
-        rows = json.loads(path.read_text(encoding="utf-8"))
-    else:
-        rows = []
-    if rows:
-        last = max(int(r["time"]) for r in rows)
-    else:
-        last = int(datetime(WARMUP_DATE.year, WARMUP_DATE.month, WARMUP_DATE.day, tzinfo=timezone.utc).timestamp() * 1000) - 86_400_000
-
-    end_ms = int(datetime(END_DATE.year, END_DATE.month, END_DATE.day, tzinfo=timezone.utc).timestamp() * 1000)
-    start = max(last + 86_400_000, int(datetime(WARMUP_DATE.year, WARMUP_DATE.month, WARMUP_DATE.day, tzinfo=timezone.utc).timestamp() * 1000))
-    while start <= end_ms:
-        url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=1d&startTime={start}&endTime={end_ms}&limit=1000"
-        with urllib.request.urlopen(url, timeout=30) as response:
-            batch = json.loads(response.read().decode("utf-8"))
-        if not batch:
-            break
-        for item in batch:
-            rows.append({
-                "time": int(item[0]),
-                "open": float(item[1]),
-                "high": float(item[2]),
-                "low": float(item[3]),
-                "close": float(item[4]),
-                "volume": float(item[5]),
-            })
-        next_start = int(batch[-1][0]) + 86_400_000
-        if next_start <= start:
-            break
-        start = next_start
-        time.sleep(0.03)
-
-    rows = sorted({int(r["time"]): r for r in rows}.values(), key=lambda r: int(r["time"]))
-    path.write_text(json.dumps(rows), encoding="utf-8")
-    out = []
-    for row in rows:
-        d = date_label(int(row["time"]))
-        if WARMUP_DATE <= date.fromisoformat(d) <= END_DATE:
-            item = dict(row)
-            item["localDate"] = d
-            out.append(item)
-    return out
-
-
 def archive_existing_latest() -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     target = ARCHIVE / f"before_btc_bnb_sol_latest_{stamp}"
     target.mkdir(parents=True, exist_ok=True)
     for path in LATEST.glob("NXT_Latest_*"):
         if path.is_file() and path.name != "NXT_Latest_Summary.md":
-            shutil.move(str(path), str(target / path.name))
+            # Copy instead of move so a transient Windows/Excel lock cannot leave
+            # latest/ partially emptied during publication.
+            shutil.copy2(str(path), str(target / path.name))
 
 
 def equity_curve(trades: list[dict]) -> list[dict]:
@@ -162,7 +112,7 @@ def build_workbook(result: dict) -> None:
     summary = wb.active
     summary.title = "Summary"
     summary["A1"] = "NXT v3.5 Latest Portfolio - BTC BNB SOL"
-    summary["A2"] = "Starting account $20,000 | 1R = $1,000 | Binance native 1D | ATR-SMA | LONG-only pullback continuation."
+    summary["A2"] = "Starting account $20,000 | 1R = $1,000 | TradingView BINANCE native 1D | ATR-SMA | LONG-only pullback continuation."
     write_row(summary, 4, ["Metric", "Value"])
     stats = result["stats"]
     rows = [
@@ -238,6 +188,10 @@ def build_workbook(result: dict) -> None:
         write_row(quality, r, [sym.replace("USDT", ""), q["dailyRows"], q["firstDay"], q["lastDay"], q["source"]])
     style_sheet(quality)
 
+    for sheet in wb.worksheets:
+        if sheet.freeze_panes is None:
+            for selection in sheet.sheet_view.selection:
+                selection.pane = None
     wb.save(OUT_XLSX)
 
 
@@ -275,12 +229,12 @@ def build_result() -> dict:
     all_trades = []
     datasets = {}
     for symbol in SYMBOLS:
-        candles = enrich_with_ssl_period(fetch_binance_native_1d(symbol), 14)
+        candles = enrich_with_ssl_period(fetch_tradingview_binance_1d(symbol, WARMUP_DATE, END_DATE), 14)
         datasets[symbol] = {
             "dailyRows": len(candles),
             "firstDay": candles[0]["localDate"],
             "lastDay": candles[-1]["localDate"],
-            "source": "Binance spot native 1D klines",
+            "source": "Binance spot native 1D (00:00 UTC), matching TradingView BINANCE 1D",
         }
         all_trades.extend(cont.backtest_symbol(symbol, candles))
     all_trades.sort(key=lambda trade: trade["exitTime"])
@@ -293,7 +247,7 @@ def build_result() -> dict:
         "period": {
             "start": START_DATE.isoformat(),
             "end": (END_DATE - base.timedelta(days=1)).isoformat(),
-            "timezone": "Binance native daily candles",
+            "timezone": "Binance native 1D session: 00:00 UTC; displayed in TradingView chart timezone",
         },
         "symbols": SYMBOLS,
         "stats": stats,
@@ -346,7 +300,7 @@ def main() -> None:
             f"Continuation trades: {result['continuationStats']['trades']}",
             f"Continuation R: {result['continuationStats']['totalR']:.2f}R",
             "",
-            "Notes: Latest selected portfolio is BTCUSDT, BNBUSDT, and SOLUSDT. Uses NXT v3.5 ATR-SMA logic, profitable-runner Anti-Immediate-Reversal, and LONG-only pullback/touch EMA20 continuation.",
+            "Notes: Latest selected portfolio is BTCUSDT, BNBUSDT, and SOLUSDT. Uses NXT v3.5 ATR-SMA logic, Early-BE 7%, profitable-runner Anti-Immediate-Reversal, and LONG-only pullback/touch EMA20 continuation requiring an SSL bullish flip.",
             "",
             f"Workbook: {LATEST_XLSX.name}",
             f"JSON: {LATEST_JSON.name}",

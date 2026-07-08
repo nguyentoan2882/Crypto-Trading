@@ -15,6 +15,7 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
+from docx import Document
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -36,6 +37,47 @@ LATEST_FUNDING_DOCX = LATEST_DIR / "NXT_Latest_NXT35_BTC_BNB_SOL_FundingAdjusted
 LATEST_SUMMARY = LATEST_DIR / "NXT_Latest_Summary.md"
 STARTING_EQUITY = 20_000
 ONE_R_DOLLARS = 1_000
+
+
+def build_funding_docx(latest: dict, result: dict) -> None:
+    if not LATEST_SOURCE_DOCX.exists():
+        return
+    doc = Document(LATEST_SOURCE_DOCX)
+    if doc.paragraphs:
+        doc.paragraphs[0].text = "NXT v3.5 Latest Portfolio - BTC BNB SOL - Funding Adjusted"
+    if len(doc.paragraphs) > 1:
+        doc.paragraphs[1].text = "Current selected TradingView BINANCE native 1D portfolio with Binance USD-M perpetual funding audit."
+
+    adjusted = result["fundingAdjustedStats"]
+    funding = result["fundingSummary"]
+    replacements = {
+        "System": f"{latest['systemVersion']} + funding-adjusted audit",
+        "Trades": str(adjusted["trades"]),
+        "Total R": f"{adjusted['totalR']:.2f}R",
+        "Max DD R": f"{adjusted['maxDrawdownR']:.2f}R",
+        "Win rate": f"{adjusted['winRate']:.2%}",
+        "Profit factor": f"{adjusted['profitFactor']:.2f}",
+        "Starting equity": f"${STARTING_EQUITY:,.2f}",
+        "Ending equity": f"${adjusted['ending20k']:,.2f}",
+    }
+    if doc.tables:
+        table = doc.tables[0]
+        for row in table.rows:
+            key = row.cells[0].text.strip()
+            if key in replacements:
+                row.cells[1].text = replacements[key]
+        for key, value in [
+            ("Original Total R", f"{result['originalStats']['totalR']:.2f}R"),
+            ("Funding R", f"{funding['totalFundingR']:.2f}R"),
+        ]:
+            cells = table.add_row().cells
+            cells[0].text = key
+            cells[1].text = value
+    try:
+        doc.save(LATEST_FUNDING_DOCX)
+    except PermissionError:
+        pending = LATEST_FUNDING_DOCX.with_name(f"{LATEST_FUNDING_DOCX.stem}_PENDING_REPLACE.docx")
+        doc.save(pending)
 
 
 def month_iter(start: date, end: date):
@@ -326,6 +368,10 @@ def build_workbook(result: dict) -> None:
     style_sheet(account)
     account.column_dimensions["Y"].width = 34
 
+    for sheet in wb.worksheets:
+        if sheet.freeze_panes is None:
+            for selection in sheet.sheet_view.selection:
+                selection.pane = None
     wb.save(OUT_XLSX)
 
 
@@ -394,9 +440,13 @@ def main() -> None:
     build_workbook(result)
     LATEST_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy2(OUT_JSON, LATEST_FUNDING_JSON)
-    shutil.copy2(OUT_XLSX, LATEST_FUNDING_XLSX)
-    if LATEST_SOURCE_DOCX.exists():
-        shutil.copy2(LATEST_SOURCE_DOCX, LATEST_FUNDING_DOCX)
+    workbook_publish_path = LATEST_FUNDING_XLSX
+    try:
+        shutil.copy2(OUT_XLSX, LATEST_FUNDING_XLSX)
+    except PermissionError:
+        workbook_publish_path = LATEST_DIR / "NXT_Latest_NXT35_BTC_BNB_SOL_FundingAdjusted_20K_PENDING_REPLACE.xlsx"
+        shutil.copy2(OUT_XLSX, workbook_publish_path)
+    build_funding_docx(latest, result)
     LATEST_SUMMARY.write_text(
         "\n".join([
             "# Latest NXT System",
@@ -420,6 +470,8 @@ def main() -> None:
             f"Compounding 5% ending equity: ${compounding_5pct['endingEquity']:,.2f}",
             f"Compounding 5% max DD: {compounding_5pct['maxDrawdownPct']:.2%}",
             "",
+            "Early-BE 7%: before TP1, move the full-position stop to entry from the next daily candle after a 7% favorable High/Low move.",
+            "",
             "Anti-Immediate-Reversal: after a profitable runner exits by SSL flip, block the opposite entry on the exit candle and the next candle.",
             "",
             f"Workbook: {LATEST_FUNDING_XLSX.name}",
@@ -439,6 +491,7 @@ def main() -> None:
         "adjustedMaxDrawdownDollars": adjusted_stats["maxDrawdownDollars"],
         "compounding2PctEnding": compounding_2pct["endingEquity"],
         "compounding5PctEnding": compounding_5pct["endingEquity"],
+        "latestWorkbook": str(workbook_publish_path),
     }, indent=2))
 
 

@@ -79,6 +79,14 @@ def apply_template(target_path: Path, output_path: Path | None = None) -> None:
         if sheet_name in template_wb.sheetnames and sheet_name in target_wb.sheetnames:
             copy_sheet_layout(template_wb[sheet_name], target_wb[sheet_name])
 
+    # Excel rejects a worksheet view that keeps selection.pane="bottomLeft"
+    # after freeze_panes has been removed. openpyxl can save that inconsistent
+    # state without warning, which makes Excel show a recovery dialog.
+    for ws in target_wb.worksheets:
+        if ws.freeze_panes is None:
+            for selection in ws.sheet_view.selection:
+                selection.pane = None
+
     target_wb.save(output_path or target_path)
 
 

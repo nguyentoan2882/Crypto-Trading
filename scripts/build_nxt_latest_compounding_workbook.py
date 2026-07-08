@@ -217,6 +217,10 @@ def main() -> None:
             [6, "Open-position unrealized P&L is not marked to market between entry and exit."],
         ],
     )
+    for sheet in wb.worksheets:
+        if sheet.freeze_panes is None:
+            for selection in sheet.sheet_view.selection:
+                selection.pane = None
     wb.save(OUT_XLSX)
     print(json.dumps({"workbook": str(OUT_XLSX), "summary": summary_rows[1:]}, indent=2))
 

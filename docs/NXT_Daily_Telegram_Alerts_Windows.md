@@ -46,7 +46,7 @@ If there is no signal, the script prints a no-signal line and sends Telegram whe
 Use Windows Task Scheduler:
 
 1. Create Task.
-2. Trigger: Daily at `07:10`.
+2. Trigger: Daily at `00:10`.
 3. Action: Start a program.
 4. Program:
 
@@ -68,12 +68,12 @@ If you install Python globally, `python` is fine. On this machine, the verified 
 C:\Users\Admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe
 ```
 
-Binance native daily candles close at `07:00` Vietnam time, so `07:10` gives the new daily candle time to appear.
+Binance native daily candles close at `07:00` Vietnam time (`00:00 UTC`), so the scheduled `07:10` scan runs after the TradingView/Binance 1D candle is final.
 
 ## Notes
 
 - The scanner uses the shared local app core in `app\nxt_signal_app.py`, so Telegram and the browser app use the same NXT latest BTC/BNB/SOL logic.
-- The current shared core uses Binance native 1D candles, SSL14, Runner A, profitable-runner anti-immediate-reversal, and LONG-only pullback continuation.
+- The current shared core uses Binance native 1D candles matching TradingView `BINANCE:<symbol>` 1D, SSL14, Runner A, Early-BE 7% triggered by a favorable High/Low move and effective from the next daily candle, profitable-runner anti-immediate-reversal, and LONG-only pullback continuation requiring an SSL bullish flip.
 - Set `NXT_NOTIFY_NO_SIGNAL=0` if you only want Telegram messages when a new entry signal appears.
 - Signal history is saved at `outputs\nxt_signal_app\signals_history.json`; this also prevents duplicate Telegram alerts for the same signal.
 - Delete that history file only if you intentionally want the scanner/app to be allowed to rediscover and resend old latest signals.

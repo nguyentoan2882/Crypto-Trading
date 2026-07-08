@@ -30,6 +30,10 @@ RULE = {
     "name": "LONG-only pullback/touch EMA20 continuation",
     "touchLookback": 5,
 }
+TP1_ATR = 2.5
+EARLY_BE_PROFIT_PCT = 0.07
+CONTINUATION_REQUIRE_SSL_FLIP = True
+ENABLE_SHORT_CONTINUATION = False
 
 
 def clear(ws, rows=1200, cols=40):
@@ -60,6 +64,12 @@ def touch_reclaim_long(candles: list[dict], i: int, lookback: int) -> bool:
     return touched and candles[i]["close"] > candles[i]["ema20"] and candles[i]["close"] > candles[i - 1]["close"]
 
 
+def touch_reject_short(candles: list[dict], i: int, lookback: int) -> bool:
+    start = max(1, i - lookback + 1)
+    touched = any(candles[j]["high"] >= candles[j]["ema20"] for j in range(start, i + 1) if candles[j]["ema20"] is not None)
+    return touched and candles[i]["close"] < candles[i]["ema20"] and candles[i]["close"] < candles[i - 1]["close"]
+
+
 def profit_factor(rows: list[dict]) -> float | None:
     gross_profit = sum(t["rMultiple"] for t in rows if t["rMultiple"] > 0)
     gross_loss = -sum(t["rMultiple"] for t in rows if t["rMultiple"] < 0)
@@ -88,26 +98,34 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
             if side == "LONG":
                 if c["low"] <= pos["stop"]:
                     exit_price = pos["stop"]
-                    reason = "Breakeven stop" if pos["triggered"] else "Stop loss"
+                    reason = "Breakeven stop" if (pos["triggered"] or pos["earlyBeTriggered"]) else "Stop loss"
                 else:
                     if not pos["triggered"] and c["high"] >= pos["tp"]:
                         pos["triggered"] = True
                         pos["tp1Time"] = c["localDate"]
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["tp"] - pos["entry"]) / pos["risk"])
+                    if not pos["triggered"] and not pos["earlyBeTriggered"] and EARLY_BE_PROFIT_PCT is not None and c["high"] >= pos["entry"] * (1 + EARLY_BE_PROFIT_PCT):
+                        pos["earlyBeTriggered"] = True
+                        pos["earlyBeTime"] = c["localDate"]
+                        pos["stop"] = pos["entry"]
                     if ssl_flip:
                         exit_price = c["close"]
                         reason = "Runner exit: SSL bearish flip"
             else:
                 if c["high"] >= pos["stop"]:
                     exit_price = pos["stop"]
-                    reason = "Breakeven stop" if pos["triggered"] else "Stop loss"
+                    reason = "Breakeven stop" if (pos["triggered"] or pos["earlyBeTriggered"]) else "Stop loss"
                 else:
                     if not pos["triggered"] and c["low"] <= pos["tp"]:
                         pos["triggered"] = True
                         pos["tp1Time"] = c["localDate"]
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["entry"] - pos["tp"]) / pos["risk"])
+                    if not pos["triggered"] and not pos["earlyBeTriggered"] and EARLY_BE_PROFIT_PCT is not None and c["low"] <= pos["entry"] * (1 - EARLY_BE_PROFIT_PCT):
+                        pos["earlyBeTriggered"] = True
+                        pos["earlyBeTime"] = c["localDate"]
+                        pos["stop"] = pos["entry"]
                     if ssl_flip:
                         exit_price = c["close"]
                         reason = "Runner exit: SSL bullish flip"
@@ -130,6 +148,8 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
                     "riskPerUnit": pos["risk"],
                     "tp1": pos["tp"],
                     "tp1Time": pos["tp1Time"],
+                    "earlyBeTriggered": pos["earlyBeTriggered"],
+                    "earlyBeTime": pos["earlyBeTime"],
                     "exitTime": c["localDate"],
                     "exitPrice": exit_price,
                     "exitReason": reason,
@@ -155,16 +175,19 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
         dist = abs(c["close"] - c["ema50"]) / c["atr14"]
         long_primary = prev["ssl"] == -1 and c["ssl"] == 1 and base.recent_cross(candles, i, "LONG") and dist <= 2 and c["rsi14"] > 50
         short_primary = prev["ssl"] == 1 and c["ssl"] == -1 and base.recent_cross(candles, i, "SHORT") and dist <= 2 and c["rsi14"] < 50
-        long_cont = c["ssl"] == 1 and c["close"] > c["ema20"] > c["ema50"] and touch_reclaim_long(candles, i, RULE["touchLookback"])
+        continuation_ssl_ok = (prev["ssl"] == -1 and c["ssl"] == 1) if CONTINUATION_REQUIRE_SSL_FLIP else c["ssl"] == 1
+        long_cont = continuation_ssl_ok and c["close"] > c["ema20"] > c["ema50"] and touch_reclaim_long(candles, i, RULE["touchLookback"])
+        short_cont_ssl_ok = (prev["ssl"] == 1 and c["ssl"] == -1) if CONTINUATION_REQUIRE_SSL_FLIP else c["ssl"] == -1
+        short_cont = ENABLE_SHORT_CONTINUATION and short_cont_ssl_ok and c["close"] < c["ema20"] < c["ema50"] and touch_reject_short(candles, i, RULE["touchLookback"])
         if last_profitable_runner_exit and i - last_profitable_runner_exit["index"] <= 1:
             if (long_primary or long_cont) and last_profitable_runner_exit["side"] == "SHORT":
                 long_primary = long_cont = False
-            if short_primary and last_profitable_runner_exit["side"] == "LONG":
-                short_primary = False
-        if not (long_primary or short_primary or long_cont):
+            if (short_primary or short_cont) and last_profitable_runner_exit["side"] == "LONG":
+                short_primary = short_cont = False
+        if not (long_primary or short_primary or long_cont or short_cont):
             continue
         side = "LONG" if (long_primary or long_cont) else "SHORT"
-        signal_type = "Continuation" if long_cont and not long_primary else "Primary"
+        signal_type = "Continuation" if ((long_cont and not long_primary) or (short_cont and not short_primary)) else "Primary"
         risk = c["atr14"] * 1.5
         entry = nxt["open"]
         pos = {
@@ -176,8 +199,10 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
             "initialStop": entry - risk if side == "LONG" else entry + risk,
             "stop": entry - risk if side == "LONG" else entry + risk,
             "risk": risk,
-            "tp": entry + c["atr14"] * 2.5 if side == "LONG" else entry - c["atr14"] * 2.5,
+            "tp": entry + c["atr14"] * TP1_ATR if side == "LONG" else entry - c["atr14"] * TP1_ATR,
             "triggered": False,
+            "earlyBeTriggered": False,
+            "earlyBeTime": "",
             "tp1Time": "",
             "realizedR": 0.0,
             "atr14": c["atr14"],
@@ -185,7 +210,7 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
             "distance": dist,
             "ema20": c["ema20"],
             "ema50": c["ema50"],
-            "notes": "Primary NXT v3.5" if signal_type == "Primary" else RULE["name"],
+            "notes": "Primary NXT v3.5" if signal_type == "Primary" else (RULE["name"] if side == "LONG" else "SHORT pullback/touch EMA20 continuation"),
         }
     return trades
 

@@ -30,6 +30,6 @@ Run the local app for the current NXT latest BTC/BNB/SOL scanner:
 & 'C:\Users\Admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' app\nxt_signal_app.py --host 127.0.0.1 --port 8765
 ```
 
-Open `http://127.0.0.1:8765`, then use `Quet Binance` to scan Binance native 1D candles. The app stores valid signals and suggested order steps in `outputs\nxt_signal_app\signals_history.json`.
+Open `http://127.0.0.1:8765`, then use `Quet Binance` to scan Binance native 1D candles, matching TradingView `BINANCE:<symbol>` on the 1D timeframe. The shared core includes Early-BE 7% and requires an SSL bullish flip for LONG Continuation signals. The app stores valid signals and suggested order steps in `outputs\nxt_signal_app\signals_history.json`.
 
 The scheduled Telegram scanner uses the same app core, so both Telegram alerts and the local app scan the same BTC/BNB/SOL symbols with the same NXT latest rules and write to the same signal history.
