@@ -73,7 +73,7 @@ Binance native daily candles close at `07:00` Vietnam time (`00:00 UTC`), so the
 ## Notes
 
 - The scanner uses the shared local app core in `app\nxt_signal_app.py`, so Telegram and the browser app use the same NXT latest BTC/BNB/SOL logic.
-- The current shared core uses Binance native 1D candles matching TradingView `BINANCE:<symbol>` 1D, SSL14, Runner A, Early-BE 7% triggered by a favorable High/Low move and effective from the next daily candle, profitable-runner anti-immediate-reversal, and LONG-only pullback continuation requiring an SSL bullish flip.
+- The current shared core uses Binance native 1D candles matching TradingView `BINANCE:<symbol>` 1D, SSL14, Runner A, Early-BE 7% checked from the first daily candle after entry and effective from the next daily candle after trigger, anti-immediate-reversal only after runner exit net R >= 0.50R, and LONG-only pullback continuation requiring an SSL bullish flip.
 - Set `NXT_NOTIFY_NO_SIGNAL=0` if you only want Telegram messages when a new entry signal appears.
 - Signal history is saved at `outputs\nxt_signal_app\signals_history.json`; this also prevents duplicate Telegram alerts for the same signal.
 - Delete that history file only if you intentionally want the scanner/app to be allowed to rediscover and resend old latest signals.

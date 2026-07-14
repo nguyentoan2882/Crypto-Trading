@@ -38,7 +38,7 @@ END_DATE = native.END_DATE
 WARMUP_DATE = native.WARMUP_DATE
 STARTING_EQUITY = 20_000
 ONE_R_DOLLARS = 1_000
-SYSTEM_VERSION = "NXT v3.5 Portfolio BTC+BNB+SOL + TradingView BINANCE native 1D + SSL14 + Runner A + Early-BE 7% + Anti-Immediate-Reversal + LONG-only Pullback Continuation on SSL Bullish Flip + No Risk-Off"
+SYSTEM_VERSION = "NXT v3.5 Portfolio BTC+BNB+SOL + TradingView BINANCE native 1D + SSL14 + Runner A + Early-BE 7% + Anti-Immediate-Reversal >=0.50R + LONG-only Pullback Continuation on SSL Bullish Flip + No Risk-Off"
 
 RULES = [
     "Data: Binance spot native 1D candles (00:00 UTC session), matching TradingView BINANCE symbols on the 1D timeframe.",
@@ -49,9 +49,9 @@ RULES = [
     "Continuation LONG: SSL flips bullish on the signal candle, close > EMA20 > EMA50, low touched EMA20 within the last 5 candles, close > EMA20, and close > previous close.",
     "Continuation is LONG-only; SHORT continuation is disabled.",
     "Continuation does not require RSI, distance-to-EMA50, or EMA50 slope filters.",
-    "Anti-immediate-reversal: after a profitable runner exits by opposite SSL flip, block an opposite-direction entry on the exit candle and the next candle.",
+    "Anti-immediate-reversal: after a runner exits by opposite SSL flip with net R >= 0.50R, block an opposite-direction entry on the exit candle and the next candle.",
     "Initial stop: 1.5 ATR14 from entry.",
-    "Early-BE 7%: before TP1, if LONG High reaches entry x 1.07 or SHORT Low reaches entry x 0.93, move the full-position stop to entry starting from the next daily candle.",
+    "Early-BE 7%: before TP1, from the first daily candle after entry onward, if LONG High reaches entry x 1.07 or SHORT Low reaches entry x 0.93, move the full-position stop to entry starting from the next daily candle.",
     "TP1: 2.5 ATR14 from entry; close 50% at TP1.",
     "Runner A: after TP1, move remaining 50% stop to breakeven and exit runner on opposite SSL flip or breakeven stop.",
     "Risk-off overlay is disabled.",
@@ -300,7 +300,7 @@ def main() -> None:
             f"Continuation trades: {result['continuationStats']['trades']}",
             f"Continuation R: {result['continuationStats']['totalR']:.2f}R",
             "",
-            "Notes: Latest selected portfolio is BTCUSDT, BNBUSDT, and SOLUSDT. Uses NXT v3.5 ATR-SMA logic, Early-BE 7%, profitable-runner Anti-Immediate-Reversal, and LONG-only pullback/touch EMA20 continuation requiring an SSL bullish flip.",
+            "Notes: Latest selected portfolio is BTCUSDT, BNBUSDT, and SOLUSDT. Uses NXT v3.5 ATR-SMA logic, Early-BE 7%, Anti-Immediate-Reversal only after runner exit net R >= 0.50R, and LONG-only pullback/touch EMA20 continuation requiring an SSL bullish flip.",
             "",
             f"Workbook: {LATEST_XLSX.name}",
             f"JSON: {LATEST_JSON.name}",

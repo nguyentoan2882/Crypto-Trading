@@ -1,11 +1,18 @@
 node_modules/
 
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+
 # Generated backtest outputs
 outputs/
+data_cache/yahoo_us_stocks_1d/
 
 # Local editor and Office temp files
 ~$*
 *.tmp
+latest/* - Copy*.xlsx
+latest/*_PENDING_REPLACE.docx
 
 # Environment and secret files
 .env

@@ -255,6 +255,90 @@ def compounding_curve(trades: list[dict], risk_pct: float, key: str) -> dict:
     }
 
 
+def portfolio_cap_curve(trades: list[dict], allocations: dict[str, float], key: str) -> dict:
+    events = {}
+    for trade in trades:
+        events.setdefault(trade["entryTime"], {"entries": [], "exits": []})["entries"].append(trade)
+        events.setdefault(trade["exitTime"], {"entries": [], "exits": []})["exits"].append(trade)
+
+    total_cap = sum(allocations.values())
+    equity = STARTING_EQUITY
+    peak = equity
+    max_drawdown = 0.0
+    max_drawdown_pct = 0.0
+    open_risk: dict[str, dict] = {}
+    rows = {}
+
+    def current_open_risk(symbol: str | None = None) -> float:
+        return sum(
+            row["riskAmount"]
+            for row in open_risk.values()
+            if symbol is None or row["symbol"] == symbol
+        )
+
+    for event_date in sorted(events):
+        same_day_keys = {
+            trade_key(trade)
+            for trade in events[event_date]["entries"]
+            if trade["exitTime"] == event_date
+        }
+        regular_exits = [
+            trade for trade in events[event_date]["exits"]
+            if trade_key(trade) not in same_day_keys
+        ]
+        same_day_exits = [
+            trade for trade in events[event_date]["exits"]
+            if trade_key(trade) in same_day_keys
+        ]
+
+        def close_trade(trade: dict) -> None:
+            nonlocal equity, peak, max_drawdown, max_drawdown_pct
+            identity = trade_key(trade)
+            risk_record = open_risk.pop(identity, None)
+            risk_amount = risk_record["riskAmount"] if risk_record else 0.0
+            pnl = risk_amount * trade[key]
+            equity += pnl
+            peak = max(peak, equity)
+            drawdown = equity - peak
+            max_drawdown = min(max_drawdown, drawdown)
+            max_drawdown_pct = min(max_drawdown_pct, drawdown / peak if peak else 0)
+            rows[identity] = {
+                "riskAmount": risk_amount,
+                "riskPct": risk_amount / equity if equity else 0.0,
+                "pnl": pnl,
+                "equity": equity,
+                "drawdown": drawdown,
+                "skipped": risk_record is None,
+            }
+
+        for trade in sorted(regular_exits, key=lambda t: (t["symbol"], t["tradeNo"])):
+            close_trade(trade)
+        for trade in sorted(events[event_date]["entries"], key=lambda t: (t["symbol"], t["tradeNo"])):
+            symbol = trade["symbol"]
+            symbol_capacity = max(0.0, equity * allocations[symbol] - current_open_risk(symbol))
+            portfolio_capacity = max(0.0, equity * total_cap - current_open_risk())
+            risk_amount = min(symbol_capacity, portfolio_capacity)
+            if risk_amount > 0:
+                open_risk[trade_key(trade)] = {
+                    "symbol": symbol,
+                    "riskAmount": risk_amount,
+                }
+        for trade in sorted(same_day_exits, key=lambda t: (t["symbol"], t["tradeNo"])):
+            close_trade(trade)
+
+    return {
+        "allocations": allocations,
+        "totalCap": total_cap,
+        "endingEquity": equity,
+        "netProfit": equity - STARTING_EQUITY,
+        "maxDrawdownDollars": max_drawdown,
+        "maxDrawdownPct": max_drawdown_pct,
+        "executedTrades": sum(1 for row in rows.values() if row["riskAmount"] > 0),
+        "skippedTrades": sum(1 for row in rows.values() if row["skipped"]),
+        "trades": rows,
+    }
+
+
 def stats_for_key(trades: list[dict], key: str) -> dict:
     rows = [dict(t, rMultiple=t[key]) for t in trades]
     return cont.enriched_stats(rows)
@@ -296,10 +380,10 @@ def build_workbook(result: dict) -> None:
         write_row(ws, r, [label, old, new, new - old if isinstance(old, (int, float)) and isinstance(new, (int, float)) else None])
     write_row(ws, 14, ["Funding R Total", "", result["fundingSummary"]["totalFundingR"], result["fundingSummary"]["totalFundingR"]])
     write_row(ws, 15, ["Funding Events", "", result["fundingSummary"]["fundingEvents"], ""])
-    write_row(ws, 17, ["Compound 2% Ending Equity", "", result["compounding2Pct"]["endingEquity"], ""])
-    write_row(ws, 18, ["Compound 2% Max DD %", "", result["compounding2Pct"]["maxDrawdownPct"], ""])
-    write_row(ws, 19, ["Compound 5% Ending Equity", "", result["compounding5Pct"]["endingEquity"], ""])
-    write_row(ws, 20, ["Compound 5% Max DD %", "", result["compounding5Pct"]["maxDrawdownPct"], ""])
+    write_row(ws, 17, ["Portfolio Cap 6% Equal Ending Equity", "", result["portfolioCap6Equal"]["endingEquity"], ""])
+    write_row(ws, 18, ["Portfolio Cap 6% Equal Max DD %", "", result["portfolioCap6Equal"]["maxDrawdownPct"], ""])
+    write_row(ws, 19, ["Portfolio Cap 6% BTC-heavy Ending Equity", "", result["portfolioCap6BtcHeavy"]["endingEquity"], ""])
+    write_row(ws, 20, ["Portfolio Cap 6% BTC-heavy Max DD %", "", result["portfolioCap6BtcHeavy"]["maxDrawdownPct"], ""])
     style_sheet(ws)
 
     trades_ws = wb.create_sheet("Trades Funding")
@@ -328,16 +412,16 @@ def build_workbook(result: dict) -> None:
         "No", "Symbol", "Signal Type", "Side", "Signal Date", "Entry Date", "Exit Date",
         "Entry Price", "Exit Price", "Original Net R", "Funding R", "Adjusted Net R",
         "Fixed P&L $", "Fixed Equity $", "Fixed Drawdown $",
-        "Risk 2% $", "P&L 2% $", "Equity 2% $", "Drawdown 2% $",
-        "Risk 5% $", "P&L 5% $", "Equity 5% $", "Drawdown 5% $",
+        "Equal Cap Risk $", "Equal Cap P&L $", "Equal Cap Equity $", "Equal Cap Drawdown $",
+        "BTC-heavy Cap Risk $", "BTC-heavy Cap P&L $", "BTC-heavy Cap Equity $", "BTC-heavy Cap Drawdown $",
         "Funding Events", "Exit Reason",
     ]
     write_row(account, 4, account_headers)
     adjusted_curve = result["equityCurveFundingAdjusted"]
     for r, (trade, curve_row) in enumerate(zip(result["trades"], adjusted_curve), 5):
         identity = trade_key(trade)
-        comp2 = result["compounding2Pct"]["trades"][identity]
-        comp5 = result["compounding5Pct"]["trades"][identity]
+        equal_cap = result["portfolioCap6Equal"]["trades"][identity]
+        btc_heavy_cap = result["portfolioCap6BtcHeavy"]["trades"][identity]
         write_row(account, r, [
             curve_row["no"],
             trade["symbol"].replace("USDT", ""),
@@ -354,14 +438,14 @@ def build_workbook(result: dict) -> None:
             curve_row["pnl"],
             curve_row["equity"],
             curve_row["drawdown"],
-            comp2["riskAmount"],
-            comp2["pnl"],
-            comp2["equity"],
-            comp2["drawdown"],
-            comp5["riskAmount"],
-            comp5["pnl"],
-            comp5["equity"],
-            comp5["drawdown"],
+            equal_cap["riskAmount"],
+            equal_cap["pnl"],
+            equal_cap["equity"],
+            equal_cap["drawdown"],
+            btc_heavy_cap["riskAmount"],
+            btc_heavy_cap["pnl"],
+            btc_heavy_cap["equity"],
+            btc_heavy_cap["drawdown"],
             trade["fundingEvents"],
             trade["exitReason"],
         ])
@@ -399,8 +483,16 @@ def main() -> None:
     adjusted_stats["ending20k"] = STARTING_EQUITY + adjusted_stats["totalR"] * ONE_R_DOLLARS
     adjusted_curve = equity_curve(trades, "netRAfterFunding")
     adjusted_stats["maxDrawdownDollars"] = min((r["drawdown"] for r in adjusted_curve), default=0)
-    compounding_2pct = compounding_curve(trades, 0.02, "netRAfterFunding")
-    compounding_5pct = compounding_curve(trades, 0.05, "netRAfterFunding")
+    portfolio_cap_6_equal = portfolio_cap_curve(
+        trades,
+        {"BTCUSDT": 0.02, "BNBUSDT": 0.02, "SOLUSDT": 0.02},
+        "netRAfterFunding",
+    )
+    portfolio_cap_6_btc_heavy = portfolio_cap_curve(
+        trades,
+        {"BTCUSDT": 0.03, "BNBUSDT": 0.015, "SOLUSDT": 0.015},
+        "netRAfterFunding",
+    )
 
     symbol_rows = []
     for symbol in latest["symbols"]:
@@ -433,8 +525,8 @@ def main() -> None:
         "fundingBySymbol": symbol_rows,
         "trades": trades,
         "equityCurveFundingAdjusted": adjusted_curve,
-        "compounding2Pct": compounding_2pct,
-        "compounding5Pct": compounding_5pct,
+        "portfolioCap6Equal": portfolio_cap_6_equal,
+        "portfolioCap6BtcHeavy": portfolio_cap_6_btc_heavy,
     }
     OUT_JSON.write_text(json.dumps(result, indent=2), encoding="utf-8")
     build_workbook(result)
@@ -465,14 +557,14 @@ def main() -> None:
             f"1R: ${ONE_R_DOLLARS:,.2f}",
             f"Funding-adjusted ending equity: ${adjusted_stats['ending20k']:,.2f}",
             f"Funding-adjusted max DD dollars: ${adjusted_stats['maxDrawdownDollars']:,.2f}",
-            f"Compounding 2% ending equity: ${compounding_2pct['endingEquity']:,.2f}",
-            f"Compounding 2% max DD: {compounding_2pct['maxDrawdownPct']:.2%}",
-            f"Compounding 5% ending equity: ${compounding_5pct['endingEquity']:,.2f}",
-            f"Compounding 5% max DD: {compounding_5pct['maxDrawdownPct']:.2%}",
+            f"Portfolio cap 6% equal split ending equity: ${portfolio_cap_6_equal['endingEquity']:,.2f}",
+            f"Portfolio cap 6% equal split max DD: {portfolio_cap_6_equal['maxDrawdownPct']:.2%}",
+            f"Portfolio cap 6% BTC-heavy ending equity: ${portfolio_cap_6_btc_heavy['endingEquity']:,.2f}",
+            f"Portfolio cap 6% BTC-heavy max DD: {portfolio_cap_6_btc_heavy['maxDrawdownPct']:.2%}",
             "",
-            "Early-BE 7%: before TP1, move the full-position stop to entry from the next daily candle after a 7% favorable High/Low move.",
+            "Early-BE 7%: before TP1, start checking the 7% favorable High/Low move from the first daily candle after entry, then move the full-position stop to entry from the next daily candle.",
             "",
-            "Anti-Immediate-Reversal: after a profitable runner exits by SSL flip, block the opposite entry on the exit candle and the next candle.",
+            "Anti-Immediate-Reversal: after a runner exits by SSL flip with net R >= 0.50R, block the opposite entry on the exit candle and the next candle.",
             "",
             f"Workbook: {LATEST_FUNDING_XLSX.name}",
             f"JSON: {LATEST_FUNDING_JSON.name}",
@@ -489,8 +581,8 @@ def main() -> None:
         "originalEnding": original_stats["ending20k"],
         "adjustedEnding": adjusted_stats["ending20k"],
         "adjustedMaxDrawdownDollars": adjusted_stats["maxDrawdownDollars"],
-        "compounding2PctEnding": compounding_2pct["endingEquity"],
-        "compounding5PctEnding": compounding_5pct["endingEquity"],
+        "portfolioCap6EqualEnding": portfolio_cap_6_equal["endingEquity"],
+        "portfolioCap6BtcHeavyEnding": portfolio_cap_6_btc_heavy["endingEquity"],
         "latestWorkbook": str(workbook_publish_path),
     }, indent=2))
 

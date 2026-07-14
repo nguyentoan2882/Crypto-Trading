@@ -28,10 +28,11 @@ from nxt_tradingview_binance_1d_data import fetch_tradingview_binance_1d
 APP_DIR = ROOT / "outputs" / "nxt_signal_app"
 HISTORY_PATH = APP_DIR / "signals_history.json"
 SCAN_PATH = APP_DIR / "last_scan.json"
-SYSTEM_NAME = "NXT v3.5 Portfolio BTC+BNB+SOL + TradingView BINANCE native 1D + SSL14 + Runner A + Early-BE 7% + Anti-Immediate-Reversal + LONG-only Pullback Continuation on SSL Bullish Flip"
+SYSTEM_NAME = "NXT v3.5 Portfolio BTC+BNB+SOL + TradingView BINANCE native 1D + SSL14 + Runner A + Early-BE 7% + Anti-Immediate-Reversal >=0.50R + LONG-only Pullback Continuation on SSL Bullish Flip"
 SYMBOLS = ["BTCUSDT", "BNBUSDT", "SOLUSDT"]
 WARMUP_DATE = native.WARMUP_DATE
 ONE_R_DOLLARS = float(os.environ.get("NXT_ONE_R_DOLLARS", "1000"))
+ANTI_REVERSAL_MIN_RUNNER_R = 0.50
 
 
 def utc_now() -> str:
@@ -131,12 +132,12 @@ def build_orders(signal: dict) -> list[dict]:
         {
             "step": 4,
             "action": "EARLY_BE_7PCT",
-            "date": "Next daily candle after 7% favorable move",
+            "date": "Next daily candle after post-entry 7% favorable move",
             "orderSide": vals["stop"],
             "orderType": "STOP_MARKET reduceOnly",
             "quantityBase": qty,
             "triggerPrice": signal["entryPrice"],
-            "note": "Before TP1, if LONG High reaches Entry x 1.07 or SHORT Low reaches Entry x 0.93, move the full-position stop to entry from the next daily candle.",
+            "note": "Before TP1, from the first daily candle after entry onward, if LONG High reaches Entry x 1.07 or SHORT Low reaches Entry x 0.93, move the full-position stop to entry from the next daily candle.",
         },
         {
             "step": 5,
@@ -176,6 +177,7 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
             ssl_flip = (side == "LONG" and prev["ssl"] == 1 and c["ssl"] == -1) or (
                 side == "SHORT" and prev["ssl"] == -1 and c["ssl"] == 1
             )
+            can_trigger_early_be = c["localDate"] != pos["entryDate"]
             exit_price = reason = None
             if side == "LONG":
                 if c["low"] <= pos["stop"]:
@@ -186,7 +188,7 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
                         pos["triggered"] = True
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["tp"] - pos["entry"]) / pos["risk"])
-                    if not pos["triggered"] and not pos["earlyBeTriggered"] and c["high"] >= pos["entry"] * 1.07:
+                    if can_trigger_early_be and not pos["triggered"] and not pos["earlyBeTriggered"] and c["high"] >= pos["entry"] * 1.07:
                         pos["earlyBeTriggered"] = True
                         pos["stop"] = pos["entry"]
                     if ssl_flip:
@@ -201,7 +203,7 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
                         pos["triggered"] = True
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["entry"] - pos["tp"]) / pos["risk"])
-                    if not pos["triggered"] and not pos["earlyBeTriggered"] and c["low"] <= pos["entry"] * 0.93:
+                    if can_trigger_early_be and not pos["triggered"] and not pos["earlyBeTriggered"] and c["low"] <= pos["entry"] * 0.93:
                         pos["earlyBeTriggered"] = True
                         pos["stop"] = pos["entry"]
                     if ssl_flip:
@@ -211,8 +213,8 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
                 rem = 0.5 if pos["triggered"] else 1.0
                 rem_r = (exit_price - pos["entry"]) / pos["risk"] if side == "LONG" else (pos["entry"] - exit_price) / pos["risk"]
                 net = pos["realizedR"] + rem * rem_r - base.cost_r(pos["entry"], pos["risk"])
-                if net > 0 and str(reason).startswith("Runner exit"):
-                    last_profitable_runner_exit = {"index": i, "side": side}
+                if net >= ANTI_REVERSAL_MIN_RUNNER_R and str(reason).startswith("Runner exit"):
+                    last_profitable_runner_exit = {"index": i, "side": side, "netR": net}
                 pos = None
             if pos:
                 continue
@@ -255,6 +257,7 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
         }
         pos = {
             "side": side,
+            "entryDate": latest_signal["entryDate"],
             "entry": entry,
             "stop": latest_signal["initialStop"],
             "risk": risk,

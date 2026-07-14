@@ -32,6 +32,7 @@ RULE = {
 }
 TP1_ATR = 2.5
 EARLY_BE_PROFIT_PCT = 0.07
+ANTI_REVERSAL_MIN_RUNNER_R = 0.50
 CONTINUATION_REQUIRE_SSL_FLIP = True
 ENABLE_SHORT_CONTINUATION = False
 
@@ -94,6 +95,7 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
         if pos:
             side = pos["side"]
             ssl_flip = (side == "LONG" and prev["ssl"] == 1 and c["ssl"] == -1) or (side == "SHORT" and prev["ssl"] == -1 and c["ssl"] == 1)
+            can_trigger_early_be = c["localDate"] != pos["entryDate"]
             exit_price = reason = None
             if side == "LONG":
                 if c["low"] <= pos["stop"]:
@@ -105,7 +107,7 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
                         pos["tp1Time"] = c["localDate"]
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["tp"] - pos["entry"]) / pos["risk"])
-                    if not pos["triggered"] and not pos["earlyBeTriggered"] and EARLY_BE_PROFIT_PCT is not None and c["high"] >= pos["entry"] * (1 + EARLY_BE_PROFIT_PCT):
+                    if can_trigger_early_be and not pos["triggered"] and not pos["earlyBeTriggered"] and EARLY_BE_PROFIT_PCT is not None and c["high"] >= pos["entry"] * (1 + EARLY_BE_PROFIT_PCT):
                         pos["earlyBeTriggered"] = True
                         pos["earlyBeTime"] = c["localDate"]
                         pos["stop"] = pos["entry"]
@@ -122,7 +124,7 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
                         pos["tp1Time"] = c["localDate"]
                         pos["stop"] = pos["entry"]
                         pos["realizedR"] += 0.5 * ((pos["entry"] - pos["tp"]) / pos["risk"])
-                    if not pos["triggered"] and not pos["earlyBeTriggered"] and EARLY_BE_PROFIT_PCT is not None and c["low"] <= pos["entry"] * (1 - EARLY_BE_PROFIT_PCT):
+                    if can_trigger_early_be and not pos["triggered"] and not pos["earlyBeTriggered"] and EARLY_BE_PROFIT_PCT is not None and c["low"] <= pos["entry"] * (1 - EARLY_BE_PROFIT_PCT):
                         pos["earlyBeTriggered"] = True
                         pos["earlyBeTime"] = c["localDate"]
                         pos["stop"] = pos["entry"]
@@ -163,8 +165,8 @@ def backtest_symbol(symbol: str, candles: list[dict]) -> list[dict]:
                     "ema50": pos["ema50"],
                     "notes": pos["notes"],
                 })
-                if net > 0 and reason.startswith("Runner exit"):
-                    last_profitable_runner_exit = {"index": i, "side": side}
+                if net >= ANTI_REVERSAL_MIN_RUNNER_R and reason.startswith("Runner exit"):
+                    last_profitable_runner_exit = {"index": i, "side": side, "netR": net}
                 n += 1
                 pos = None
             if pos:

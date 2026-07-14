@@ -66,6 +66,20 @@ def build_message(alerts: list[dict]) -> str:
     return "\n".join(lines).strip()
 
 
+def build_error_message(result: dict) -> str:
+    lines = [
+        f"{core.SYSTEM_NAME}: scan error",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+    ]
+    for err in result.get("errors", []):
+        lines.append(f"- {err['symbol']}: {err['error']}")
+    checked_symbols = ", ".join(item["symbol"] for item in result.get("checked", []))
+    if checked_symbols:
+        lines.extend(["", f"Checked before failure: {checked_symbols}"])
+    return "\n".join(lines).strip()
+
+
 def send_telegram(message: str) -> None:
     token = os.environ.get("NXT_TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("NXT_TELEGRAM_CHAT_ID")
@@ -93,6 +107,8 @@ def main() -> int:
     if result.get("errors"):
         for err in result["errors"]:
             print(f"{err['symbol']}: {err['error']}", file=sys.stderr)
+        if env_bool("NXT_NOTIFY_ERRORS", True):
+            send_telegram(build_error_message(result))
     if env_bool("NXT_NOTIFY_NO_SIGNAL"):
         send_telegram(message)
     return 1 if result.get("errors") else 0
