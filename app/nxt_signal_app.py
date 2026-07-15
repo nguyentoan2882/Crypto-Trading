@@ -22,13 +22,13 @@ import backtest_nxt31_utc7_latest as base
 import backtest_nxt32_native_1d_latest as native
 import test_nxt33_long_only_pullback_continuation as cont
 from test_nxt33_ssl14 import enrich_with_ssl_period
-from nxt_tradingview_binance_1d_data import fetch_tradingview_binance_1d
+from nxt_usdm_binance_1d_data import fetch_usdm_1d
 
 
 APP_DIR = ROOT / "outputs" / "nxt_signal_app"
 HISTORY_PATH = APP_DIR / "signals_history.json"
 SCAN_PATH = APP_DIR / "last_scan.json"
-SYSTEM_NAME = "NXT v3.5 Portfolio BTC+BNB+SOL + TradingView BINANCE native 1D + SSL14 + Runner A + Early-BE 7% + Anti-Immediate-Reversal >=0.50R + LONG-only Pullback Continuation on SSL Bullish Flip"
+SYSTEM_NAME = "NXT v3.5 Portfolio BTC+BNB+SOL + Binance USD-M 1D + SSL14 + Runner A + Early-BE 7% + Anti-Immediate-Reversal >=0.50R + LONG-only Pullback Continuation + Block SHORT after losing pre-TP1 LONG SSL exit"
 SYMBOLS = ["BTCUSDT", "BNBUSDT", "SOLUSDT"]
 WARMUP_DATE = native.WARMUP_DATE
 ONE_R_DOLLARS = float(os.environ.get("NXT_ONE_R_DOLLARS", "1000"))
@@ -62,7 +62,7 @@ def http_json(url: str, data: dict | None = None) -> object:
 
 
 def fetch_daily_candles(symbol: str) -> list[dict]:
-    return fetch_tradingview_binance_1d(symbol, WARMUP_DATE)
+    return fetch_usdm_1d(symbol, WARMUP_DATE)
 
 
 def load_json(path: Path, default: object) -> object:
@@ -77,7 +77,7 @@ def save_json(path: Path, payload: object) -> None:
 
 
 def signal_id(signal: dict) -> str:
-    return f"{signal['symbol']}:{signal['signalDate']}:{signal['side']}:{signal['signalType']}"
+    return f"NXT35_USDM_BlockShortAfterLosingLong:{signal['symbol']}:{signal['signalDate']}:{signal['side']}:{signal['signalType']}"
 
 
 def fmt(value: float) -> str:
@@ -165,6 +165,7 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
     candles = enrich_with_ssl_period(candles, 14)
     pos = None
     last_profitable_runner_exit = None
+    last_losing_long_ssl_exit = None
     latest_signal = None
 
     for i in range(55, len(candles) - 1):
@@ -215,6 +216,8 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
                 net = pos["realizedR"] + rem * rem_r - base.cost_r(pos["entry"], pos["risk"])
                 if net >= ANTI_REVERSAL_MIN_RUNNER_R and str(reason).startswith("Runner exit"):
                     last_profitable_runner_exit = {"index": i, "side": side, "netR": net}
+                if side == "LONG" and not pos["triggered"] and reason == "Runner exit: SSL bearish flip" and net < 0:
+                    last_losing_long_ssl_exit = {"index": i, "netR": net}
                 pos = None
             if pos:
                 continue
@@ -230,6 +233,8 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
                 long_primary = long_cont = False
             if short_primary and last_profitable_runner_exit["side"] == "LONG":
                 short_primary = False
+        if last_losing_long_ssl_exit and i - last_losing_long_ssl_exit["index"] <= 1:
+            short_primary = False
         if not (long_primary or short_primary or long_cont):
             continue
 

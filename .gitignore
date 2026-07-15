@@ -7,6 +7,8 @@ __pycache__/
 # Generated backtest outputs
 outputs/
 data_cache/yahoo_us_stocks_1d/
+data_cache/binance_futures_funding/
+data_cache/binance_usdm_futures_1d/
 
 # Local editor and Office temp files
 ~$*

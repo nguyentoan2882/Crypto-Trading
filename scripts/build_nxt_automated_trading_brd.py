@@ -13,7 +13,7 @@ from docx.shared import Inches, Pt, RGBColor
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "docs" / "BRD_NXT_Automated_Signal_Trading_System_v0.1.docx"
+OUT = ROOT / "docs" / "BRD_NXT_Automated_Signal_Trading_System_v0.2.docx"
 
 BLUE = "1F4D78"
 LIGHT_BLUE = "E8EEF5"
@@ -57,6 +57,13 @@ def set_repeat_table_header(row) -> None:
     tbl_header = OxmlElement("w:tblHeader")
     tbl_header.set(qn("w:val"), "true")
     tr_pr.append(tbl_header)
+
+
+def prevent_row_split(row) -> None:
+    """Keep a table row intact when it reaches a page boundary."""
+    tr_pr = row._tr.get_or_add_trPr()
+    cant_split = OxmlElement("w:cantSplit")
+    tr_pr.append(cant_split)
 
 
 def set_table_geometry(table, widths: list[int]) -> None:
@@ -203,6 +210,7 @@ def add_table(doc, headers: list[str], rows: list[list[str]], widths: list[int],
     table.style = "Table Grid"
     header = table.rows[0]
     set_repeat_table_header(header)
+    prevent_row_split(header)
     for idx, text in enumerate(headers):
         cell = header.cells[idx]
         set_cell_shading(cell, header_fill)
@@ -212,6 +220,7 @@ def add_table(doc, headers: list[str], rows: list[list[str]], widths: list[int],
         set_run(p.add_run(text), size=9.5, bold=True, color=DARK)
     for row_data in rows:
         row = table.add_row()
+        prevent_row_split(row)
         for idx, text in enumerate(row_data):
             cell = row.cells[idx]
             p = cell.paragraphs[0]
@@ -264,10 +273,10 @@ def build() -> None:
 
     metadata = [
         ["Thuộc tính", "Giá trị"],
-        ["Phiên bản", "v0.1 - Discovery baseline"],
+        ["Phiên bản", "v0.2 - USD-M rulebook and desktop-first baseline"],
         ["Ngày", date.today().strftime("%d/%m/%Y")],
         ["Business owner", "Người dùng/Chủ tài khoản giao dịch - cần xác nhận"],
-        ["Phạm vi baseline", "NXT v3.5; BTCUSDT, BNBUSDT, SOLUSDT; Binance Native 1D"],
+        ["Phạm vi baseline", "NXT v3.5 USD-M; BTCUSDT, BNBUSDT, SOLUSDT; USD-M perpetual 1D; promoted rulebook 2026-07-14"],
         ["Trạng thái", "Draft for review - chưa phê duyệt live trading"],
     ]
     add_table(doc, metadata[0], metadata[1:], [1800, 7560], LIGHT_BLUE)
@@ -286,17 +295,17 @@ def build() -> None:
         "Mục tiêu là phát triển hệ thống giao dịch bán tự động dựa trên NXT latest, có khả năng scan tín hiệu hằng ngày, lưu lịch sử, thông báo, sinh đề xuất order, nhận quyết định của người dùng, gửi lệnh lên Binance và theo dõi vòng đời vị thế. Hệ thống phải ưu tiên kiểm soát rủi ro, khả năng truy vết và ngăn hành động trùng lặp hơn tốc độ thực thi."
     )
     add_bullets(doc, [
-        "Current state đã có scanner/app dùng chung NXT v3.5, Telegram notification, lịch chạy Windows và lịch sử signal JSON.",
+        "Current state đã có desktop scanner/app dùng chung NXT v3.5 USD-M, Telegram notification, lịch chạy Windows và lịch sử signal JSON.",
         "Khoảng trống chính: chưa có approval workflow, Binance authenticated trading, order/position state, event reconciliation, daily action recommendation và operational controls.",
         "Target state là human-in-the-loop: hệ thống đề xuất; người dùng quyết định; hệ thống chỉ thực thi đúng order plan đã được duyệt và tiếp tục monitor.",
-        "Short signal và funding-adjusted backtest cho thấy sản phẩm Binance USD-M Futures là giả định nghiệp vụ phù hợp nhất, nhưng cần owner xác nhận trước thiết kế chi tiết.",
+        "Promoted latest sử dụng Binance USD-M perpetual 1D candles và USD-M historical funding; live execution vẫn chỉ mở sau testnet/UAT và owner approval.",
     ])
 
     doc.add_heading("2. Bối cảnh và current state", level=1)
     add_table(doc, ["Năng lực", "Hiện trạng", "Khoảng trống"], [
-        ["NXT rule engine", "NXT v3.5; Native 1D; SSL14; Runner A; anti-immediate-reversal; LONG-only continuation.", "Cần version locking, rule audit và migration khi promote latest."],
+        ["NXT rule engine", "NXT v3.5 USD-M 1D; SSL14; Runner A; Early-BE 7%; G-01 anti-reversal; G-02 block SHORT sau losing pre-TP1 LONG SSL exit; LONG-only continuation.", "Cần version locking, source artifact hash, golden regression và migration khi promote latest."],
         ["Universe", "BTCUSDT, BNBUSDT, SOLUSDT.", "Cần cấu hình symbol và kiểm tra contract availability."],
-        ["Scan", "Daily scan qua Binance data API, lịch Windows 07:10 ICT.", "Cần SLA, retry, health alert, late-candle handling."],
+        ["Scan", "Daily scan desktop qua Binance USD-M data API, lịch Windows 07:10 ICT.", "Cần SLA, retry, health alert, late-candle handling và stale-data block."],
         ["Notification", "Telegram entry alert/no-signal tùy cấu hình.", "Cần Approve/Reject, expiry, escalation và delivery status."],
         ["History", "Signal history JSON và last scan JSON.", "Cần database/audit log, lifecycle status, immutable events."],
         ["Order plan", "Đề xuất entry, initial stop, TP1, breakeven, runner exit.", "Chưa validate exchange filters, balance, leverage, partial fills."],
@@ -335,6 +344,7 @@ def build() -> None:
         "Daily position monitoring và event-driven updates khi order/fill thay đổi.",
         "Khuyến nghị TP1, move SL to breakeven, runner exit, emergency action và exception handling.",
         "Audit log, health monitoring, backup/export và operational controls.",
+        "Vận hành desktop-first trên Windows: local app và Windows Task Scheduler là runtime MVP chính thức.",
     ])
     doc.add_heading("5.2 Out of scope cho MVP", level=2)
     add_bullets(doc, [
@@ -344,20 +354,22 @@ def build() -> None:
         "Tự động rút tiền, chuyển tiền hoặc cấp quyền withdrawal.",
         "Cam kết lợi nhuận hoặc coi backtest là dự báo kết quả tương lai.",
         "Auto-approve entry live hoàn toàn không có người dùng trong vòng kiểm soát MVP.",
+        "Cloud deployment, cloud scheduler hoặc remote execution service trong MVP; chỉ đánh giá sau desktop testnet/paper pilot ổn định.",
     ])
     doc.add_heading("5.3 Chưa quyết định", level=2)
     add_bullets(doc, [
-        "USD-M Futures hay Spot/Margin là execution product chính thức.",
+        "Thiết lập tài khoản USD-M Futures (testnet/live), jurisdiction và contract availability cho từng symbol.",
         "Risk sizing live: fixed USD per R hay % equity; mức default và hard cap.",
         "Leverage, margin mode, price deviation tolerance và approval expiry.",
         "Có cho phép approve qua Telegram inline button hay chỉ qua app có xác thực.",
         "Mức tự động hóa sau MVP: auto-protective orders, auto-TP/SL, auto-runner exit.",
+        "Cloud-readiness criteria sau desktop pilot; đây không phải quyết định blocking cho MVP.",
     ])
 
     doc.add_heading("6. Quy trình nghiệp vụ target state", level=1)
     doc.add_heading("6.1 Luồng scan và phê duyệt entry", level=2)
     add_numbered(doc, [
-        "Scheduler khởi chạy sau khi Binance Native 1D candle đóng; hệ thống kiểm tra candle completeness và rule version.",
+        "Windows Task Scheduler khởi chạy desktop scanner sau khi Binance USD-M 1D candle đóng (mặc định 07:10 ICT); hệ thống kiểm tra candle completeness, data source, contract và rule version.",
         "Rule engine scan BTCUSDT, BNBUSDT, SOLUSDT và sinh signal snapshot nếu đạt NXT latest.",
         "Risk engine lấy account snapshot, open exposure, exchange filters và policy để tính order proposal.",
         "Hệ thống lưu signal/order proposal trước khi gửi notification; mỗi proposal có ID duy nhất và thời hạn.",
@@ -395,21 +407,23 @@ def build() -> None:
 
     doc.add_heading("7. Business rules", level=1)
     rules = [
-        ("BR-01", "Rule version", "Mỗi signal phải gắn immutable NXT version và parameter snapshot; thay latest không được thay đổi signal lịch sử."),
+        ("BR-01", "Rule version", "Mỗi signal phải gắn immutable NXT version, parameter snapshot, data-source/contract và source artifact hash; thay latest không được thay đổi signal lịch sử."),
         ("BR-02", "Universe", "Mặc định BTCUSDT, BNBUSDT, SOLUSDT; symbol ngoài danh sách phải được cấu hình, backtest và phê duyệt."),
-        ("BR-03", "Signal timing", "Chỉ dùng nến Binance Native 1D đã đóng; không phát signal từ candle đang chạy."),
-        ("BR-04", "Primary LONG", "SSL14 bullish flip, EMA20 cross trong lookback, distance EMA50 <= 2 ATR, RSI14 > 50 theo implementation latest."),
-        ("BR-05", "Primary SHORT", "SSL14 bearish flip, EMA20 cross xuống, distance EMA50 <= 2 ATR, RSI14 < 50."),
-        ("BR-06", "Continuation", "Chỉ LONG continuation khi SSL bullish, close > EMA20 > EMA50 và đạt touch/reclaim rule latest."),
-        ("BR-07", "Anti-reversal", "Sau profitable runner exit do SSL flip, block opposite entry tại exit candle và candle kế tiếp."),
-        ("BR-08", "Initial risk", "Initial stop cách entry 1.5 ATR14; TP1 cách entry 2.5 ATR14; đóng 50% tại TP1."),
-        ("BR-09", "Runner", "Sau TP1, stop phần còn lại về entry; close runner khi opposite SSL flip hoặc stop được kích hoạt."),
-        ("BR-10", "Approval", "Không gửi entry order live nếu không có approval còn hiệu lực, đúng proposal hash và đúng environment."),
-        ("BR-11", "Risk cap", "Order bị chặn nếu vượt per-trade, symbol, portfolio, leverage hoặc daily-loss limits."),
-        ("BR-12", "Idempotency", "Một approved proposal chỉ được tạo tối đa một logical entry order; retry phải dùng client order ID ổn định."),
-        ("BR-13", "Protective orders", "Sau entry fill, SL phải được tạo ngay; nếu không tạo được, position chuyển Critical và kích hoạt policy xử lý khẩn cấp."),
-        ("BR-14", "Reconciliation", "Binance là source of truth cho order/fill/position; khác biệt phải được ghi nhận và khóa automation liên quan."),
-        ("BR-15", "Manual override", "Manual close/cancel trên Binance hoặc app phải được phát hiện; hệ thống không được tự tái mở vị thế vì cho rằng lệnh thiếu."),
+        ("BR-03", "Signal timing and source", "Chỉ dùng Binance USD-M perpetual 1D candle đã đóng tại 00:00 UTC; không phát signal từ candle đang chạy hoặc cache stale."),
+        ("BR-04", "Primary LONG", "SSL14 bullish flip; EMA20 cross-up trong candle signal hoặc 2 candles trước; distance EMA50 <= 2 ATR14; RSI14 > 50."),
+        ("BR-05", "Primary SHORT", "SSL14 bearish flip; EMA20 cross-down trong candle signal hoặc 2 candles trước; distance EMA50 <= 2 ATR14; RSI14 < 50."),
+        ("BR-06", "LONG Continuation", "Chỉ LONG continuation khi SSL14 bullish flip, close > EMA20 > EMA50, có Low <= EMA20 trong 5 candles gần nhất, close > EMA20 và close > close candle trước. SHORT continuation tắt."),
+        ("BR-07", "Profitable SSL reversal guard (G-01)", "Sau SSL runner exit có net R trước funding >= +0.50R, block entry ngược chiều tại exit candle và candle kế tiếp; sau LONG block SHORT Primary, sau SHORT block LONG Primary/Continuation."),
+        ("BR-08", "Initial risk and TP1", "Entry tại open candle kế tiếp; initial stop = 1.5 x ATR14 signal. TP1 = 2.5 x ATR14 signal; đóng 50% tại TP1 rồi stop phần còn lại về entry."),
+        ("BR-09", "Early-BE and exit order", "Từ candle đầu tiên sau entry và trước TP1: LONG High >= Entry x 1.07 hoặc SHORT Low <= Entry x 0.93 kích hoạt stop về entry cho candle sau. Trên mỗi candle, kiểm tra stop trước, rồi TP1/Early-BE, rồi opposite SSL exit."),
+        ("BR-10", "Losing pre-TP1 LONG guard (G-02)", "Khi prior LONG chưa TP1 thoát đúng bằng SSL bearish flip với net R trước funding < 0, block chỉ SHORT Primary tại exit candle và candle kế tiếp; không block LONG setup."),
+        ("BR-11", "Indicator calculation", "EMA20/EMA50 tính trên close; ATR14 = SMA(True Range,14); RSI14 smoothing Wilder; SSL14 dùng SMA14 High/Low và giữ state khi close nằm giữa bands."),
+        ("BR-12", "Approval", "Không gửi entry order live nếu không có approval còn hiệu lực, đúng proposal hash và đúng environment."),
+        ("BR-13", "Risk cap", "Order bị chặn nếu vượt per-trade, symbol, portfolio, leverage hoặc daily-loss limits."),
+        ("BR-14", "Idempotency", "Một approved proposal chỉ được tạo tối đa một logical entry order; retry phải dùng client order ID ổn định."),
+        ("BR-15", "Protective orders", "Sau entry fill, SL phải được tạo ngay; nếu không tạo được, position chuyển Critical và kích hoạt policy xử lý khẩn cấp."),
+        ("BR-16", "Reconciliation", "Binance là source of truth cho order/fill/position; khác biệt phải được ghi nhận và khóa automation liên quan."),
+        ("BR-17", "Manual override", "Manual close/cancel trên Binance hoặc app phải được phát hiện; hệ thống không được tự tái mở vị thế vì cho rằng lệnh thiếu."),
     ]
     add_table(doc, ["ID", "Tên", "Quy tắc"], [[a, b, c] for a, b, c in rules], [1100, 1900, 6360])
 
@@ -419,11 +433,11 @@ def build() -> None:
                     "Hệ thống shall tự động chạy daily scan sau khi nến 1D đóng và cho phép scan thủ công.",
                     ["Given scheduler active, when đến giờ cấu hình, then scan chạy một lần với run ID.",
                      "Nếu data chưa complete, hệ thống retry theo policy và không dùng candle chưa đóng.",
-                     "Kết quả phải lưu checked symbols, candle date, rule version, errors và duration."])
+                     "Kết quả phải lưu checked symbols, candle date, USD-M contract/data source, rule version, artifact hash, errors và duration."])
     add_requirement(doc, "FR-02", "Signal detection and persistence", "Must",
                     "Hệ thống shall lưu signal hợp lệ trước notification và không tạo duplicate.",
-                    ["Signal ID phải deterministic theo symbol, signal date, side, type và rule version.",
-                     "Signal snapshot phải chứa indicator values, entry reference, SL, TP1 và detected timestamp.",
+                    ["Signal ID phải deterministic theo symbol, signal date, side, type, rule version và source artifact hash.",
+                     "Signal snapshot phải chứa indicator values, data source/contract, entry reference, SL, TP1, guard decision pass/fail và detected timestamp.",
                      "Re-run cùng dữ liệu không tạo thêm signal record."])
     add_requirement(doc, "FR-03", "Order proposal", "Must",
                     "Hệ thống shall tạo order proposal dựa trên signal, account state, risk policy và Binance filters.",
@@ -457,7 +471,8 @@ def build() -> None:
                      "Manual Binance activity phải được nhận diện và reflected trong internal state."])
     add_requirement(doc, "FR-09", "Exit recommendations", "Must",
                     "Hệ thống shall đề xuất hoặc thực hiện action đúng NXT policy và automation level.",
-                    ["TP1, BE move, SSL runner exit, stop/close phải có rationale và current position snapshot.",
+                    ["TP1, Early-BE, BE move, SSL runner exit, stop/close phải có rationale, rule version và current position snapshot.",
+                     "Position mở giữ entry rule version; latest rule mới chỉ áp dụng khi có explicit migration record hoặc policy đã được phê duyệt.",
                      "Action cần approval phải không được gửi trước approval.",
                      "Không được close quantity vượt position thực."])
     add_requirement(doc, "FR-10", "Notifications", "Must",
@@ -480,7 +495,7 @@ def build() -> None:
     add_table(doc, ["ID", "Nhóm", "Yêu cầu"], [
         ["NFR-01", "Security", "API key không có withdrawal; tách read/trade key nếu khả thi; IP allowlist; secrets không lưu/log plaintext."],
         ["NFR-02", "Reliability", "Retry có exponential backoff; idempotent execution; recover sau restart mà không mất state."],
-        ["NFR-03", "Availability", "Daily scan target >=99%; monitor service health và alert khi scheduler missed."],
+        ["NFR-03", "Availability", "Desktop-first: daily scan target >=99% trên Windows Task Scheduler; monitor local service health và alert khi scheduler missed."],
         ["NFR-04", "Performance", "Scan hoàn tất trong 5 phút; approval action phản hồi UI <3 giây; execution request theo exchange SLA."],
         ["NFR-05", "Auditability", "Append-only business event log; timestamp UTC; actor, correlation ID, rule version, before/after state."],
         ["NFR-06", "Data integrity", "Atomic writes/transactions; backup; checksum/version; reconciliation với Binance."],
@@ -492,7 +507,7 @@ def build() -> None:
 
     doc.add_heading("10. Data requirements", level=1)
     add_table(doc, ["Entity", "Trường chính", "Retention/Control"], [
-        ["RuleVersion", "version, parameters, source artifact hash, promotedAt", "Immutable; retain indefinitely."],
+        ["RuleVersion", "version, parameters, USD-M contract/session, source artifact hash, promotedAt", "Immutable; retain indefinitely."],
         ["ScanRun", "runId, start/end, candleDate, symbols, status, errors", ">= 2 years."],
         ["Signal", "signalId, ruleVersion, indicators, rationale, detectedAt", "Immutable snapshot."],
         ["OrderProposal", "proposalId, signalId, quantity, levels, risk, expiry, hash", "Versioned; no in-place mutation after approval."],
@@ -505,7 +520,7 @@ def build() -> None:
 
     doc.add_heading("11. Binance integration requirements", level=1)
     add_bullets(doc, [
-        "Execution assumption: Binance USD-M Futures because NXT supports SHORT and backtest includes funding. Owner must confirm.",
+        "Technical baseline: Binance USD-M Futures because promoted NXT latest uses USD-M contract candles, supports SHORT and includes funding. Owner must still approve account/product eligibility before live execution.",
         "SIGNED requests use API key/signature and server-time-safe timestamp/recvWindow handling.",
         "Use unique client order IDs for idempotency and recovery after ambiguous network errors.",
         "Read exchange information before sizing; enforce price, quantity, notional and order-count filters.",
@@ -561,33 +576,34 @@ def build() -> None:
     ], [2600, 6760])
 
     doc.add_heading("15. Acceptance và UAT", level=1)
-    add_numbered(doc, [
-        "Golden-signal test: scanner mới khớp danh sách signal của NXT latest trên tập dữ liệu kiểm soát.",
-        "Duplicate test: chạy cùng candle nhiều lần không tạo signal/order trùng.",
-        "Approval test: reject/expired proposal không bao giờ gọi trading endpoint.",
-        "Testnet E2E: signal -> proposal -> approve -> entry -> SL/TP -> fill -> close -> audit đầy đủ.",
-        "Ambiguous response test: timeout sau submit không tạo duplicate; hệ thống query order trước retry.",
-        "Partial fill test: protective quantity khớp actual fill và không vượt position.",
-        "Manual intervention test: đóng/sửa order ngoài hệ thống được phát hiện và reconciled.",
-        "Kill switch test: block entry mới nhưng vẫn cho read/monitor và hành động khẩn cấp theo policy.",
-        "Recovery test: restart giữa lifecycle không mất decision/order state.",
-        "Security test: logs/export không chứa API secret/signature; key không có withdrawal permission.",
-        "Operational run: tối thiểu 30 ngày paper/testnet không có Sev-1/duplicate order trước live review.",
+    add_bullets(doc, [
+        "UAT-01 Golden signal: scanner khớp danh sách signal NXT latest trên tập USD-M 1D kiểm soát, theo exact rule version và artifact hash.",
+        "UAT-02 G-02 regression: prior LONG chưa TP1 + SSL bearish exit + net R trước funding < 0 phải block SHORT Primary tại exit candle và candle kế tiếp; không block ở candle thứ ba, khi TP1 đã hit, khi exit không phải SSL bearish, hoặc khi net R >= 0.",
+        "UAT-03 Duplicate: chạy cùng candle nhiều lần không tạo signal/order trùng.",
+        "UAT-04 Approval: reject/expired proposal không bao giờ gọi trading endpoint.",
+        "UAT-05 Testnet E2E: signal -> proposal -> approve -> entry -> SL/TP -> fill -> close -> audit đầy đủ.",
+        "UAT-06 Ambiguous response: timeout sau submit không tạo duplicate; hệ thống query order trước retry.",
+        "UAT-07 Partial fill: protective quantity khớp actual fill và không vượt position.",
+        "UAT-08 Manual intervention: đóng/sửa order ngoài hệ thống được phát hiện và reconciled.",
+        "UAT-09 Kill switch: block entry mới nhưng vẫn cho read/monitor và hành động khẩn cấp theo policy.",
+        "UAT-10 Recovery: restart giữa lifecycle không mất decision/order state.",
+        "UAT-11 Security: logs/export không chứa API secret/signature; key không có withdrawal permission.",
+        "UAT-12 Operational run: tối thiểu 30 ngày desktop paper/testnet không có Sev-1/duplicate order trước live review.",
     ])
 
     doc.add_heading("16. Roadmap đề xuất", level=1)
     add_table(doc, ["Giai đoạn", "Phạm vi", "Exit criteria"], [
         ["Phase 0 - Discovery", "Chốt open questions, product, risk policy, approval model.", "BRD sign-off và decision log."],
-        ["Phase 1 - Paper workflow", "Database, lifecycle, app/Telegram approval, simulated fills.", "UAT signal/history/approval đạt."],
-        ["Phase 2 - Binance testnet", "Authenticated gateway, orders, stream, reconciliation, controls.", "30 ngày ổn định; no duplicate."],
-        ["Phase 3 - Live assisted", "Live entry sau manual approval; auto protective orders.", "Go-live checklist và low-risk pilot."],
-        ["Phase 4 - Managed automation", "Tùy chọn auto TP/SL/runner theo policy.", "Risk committee/owner approval."],
+        ["Phase 1 - Desktop paper workflow", "Windows desktop local app, Task Scheduler, database/lifecycle, app/Telegram approval, simulated fills.", "UAT signal/history/approval đạt."],
+        ["Phase 2 - Desktop USD-M testnet", "Authenticated gateway, orders, stream, reconciliation và controls trên desktop runtime.", "30 ngày ổn định; no duplicate."],
+        ["Phase 3 - Desktop live assisted", "Live entry sau manual approval; auto protective orders trên desktop runtime.", "Go-live checklist và low-risk pilot."],
+        ["Phase 4 - Managed automation", "Tùy chọn auto TP/SL/runner theo policy; chỉ đánh giá cloud-readiness sau desktop pilot.", "Risk committee/owner approval."],
     ], [1900, 4500, 2960])
 
     doc.add_heading("17. Dependencies và risks", level=1)
     add_table(doc, ["Risk/Dependency", "Ảnh hưởng", "Mitigation"], [
         ["NXT latest thay đổi", "Signal live lệch backtest.", "Version locking, golden regression, controlled promotion."],
-        ["Windows host tắt/mất mạng", "Missed scan/monitor.", "StartWhenAvailable; health alert; cân nhắc cloud service."],
+        ["Windows desktop tắt/mất mạng", "Missed scan/monitor.", "StartWhenAvailable; health alert; runbook restart/reconcile. Cloud chỉ đánh giá sau desktop pilot ổn định."],
         ["Binance API/region/account limits", "Không thể trade hoặc stream.", "Test account capability; endpoint abstraction; retry/reconcile."],
         ["Risk sizing quá cao", "Drawdown/liquidation.", "Configurable % equity, hard caps, isolated margin."],
         ["Duplicate/ambiguous orders", "Overexposure.", "Idempotency, client IDs, query-before-retry."],
@@ -598,7 +614,7 @@ def build() -> None:
 
     doc.add_heading("18. Open questions cần business owner trả lời", level=1)
     questions = [
-        ["OQ-01", "Execution product chính thức là USD-M Futures, Spot hay Margin?", "Owner", "Blocking"],
+        ["OQ-01", "Tài khoản USD-M Futures có đủ eligibility/contract availability cho testnet và live không?", "Owner", "Blocking"],
         ["OQ-02", "Risk live mỗi trade là fixed USD hay % equity? Default và hard cap?", "Owner", "Blocking"],
         ["OQ-03", "Leverage tối đa và margin mode cho từng symbol?", "Owner", "Blocking"],
         ["OQ-04", "Entry cần approve qua Telegram, app hay cả hai? Có yêu cầu PIN/2FA?", "Owner/Security", "Blocking"],
@@ -609,38 +625,39 @@ def build() -> None:
         ["OQ-09", "Daily loss/open-risk limits và correlated exposure cap?", "Owner", "Blocking"],
         ["OQ-10", "Ai có quyền bật Live, pause, kill switch và resume?", "Owner", "High"],
         ["OQ-11", "Retention/audit backup cần bao lâu và lưu ở đâu?", "Owner/Operator", "Medium"],
-        ["OQ-12", "Có yêu cầu deploy cloud để monitor 24/7 thay Windows host không?", "Owner", "High"],
+        ["OQ-12", "Sau desktop testnet/paper pilot, tiêu chí nào kích hoạt đánh giá cloud-readiness?", "Owner", "Deferred"],
     ]
     add_table(doc, ["ID", "Câu hỏi", "Owner", "Mức"], questions, [1000, 5800, 1500, 1060])
 
     doc.add_heading("19. Decision log ban đầu", level=1)
     add_table(doc, ["Ngày", "Decision/Assumption", "Rationale", "Status"], [
-        [date.today().isoformat(), "Baseline là NXT v3.5 BTC/BNB/SOL Native 1D.", "Khớp latest summary và scanner hiện tại.", "Confirmed current state"],
+        [date.today().isoformat(), "Baseline là NXT v3.5 USD-M BTC/BNB/SOL 1D; promoted rulebook 2026-07-14.", "Khớp latest summary, rulebook và signal-level regression đã publish.", "Confirmed current state"],
         [date.today().isoformat(), "Human approval cho entry trong MVP.", "Giảm rủi ro giao dịch live ngoài ý muốn.", "Recommended"],
         [date.today().isoformat(), "Testnet/paper trước live.", "Cần chứng minh execution và reconciliation.", "Recommended"],
-        [date.today().isoformat(), "USD-M Futures là giả định execution.", "Hỗ trợ SHORT và funding phù hợp baseline.", "Pending owner"],
+        [date.today().isoformat(), "USD-M Futures là technical baseline cho data/backtest và execution integration.", "Promoted latest dùng USD-M candles/funding; live eligibility vẫn cần owner approval.", "Confirmed technical baseline"],
         [date.today().isoformat(), "Live risk không kế thừa mặc định 1R=$1,000.", "Backtest account tương đương 5%/trade, rủi ro cao.", "Pending owner"],
+        [date.today().isoformat(), "Desktop-first runtime cho MVP.", "Local app + Windows Task Scheduler là runtime chính thức; cloud không thuộc MVP.", "Confirmed"],
     ], [1400, 3400, 3360, 1200])
 
     doc.add_heading("20. Traceability summary", level=1)
     add_table(doc, ["Business objective", "Requirements", "UAT"], [
         ["OBJ-01/02 Scan và không trùng", "FR-01, FR-02, NFR-02", "UAT 1, 2, 9"],
         ["OBJ-03 Quyết định có đủ dữ liệu", "FR-03, FR-04, FR-10, FR-11", "UAT 3, 4"],
-        ["OBJ-04 Không trade khi chưa duyệt", "BR-10, FR-04, FR-05, FR-12", "UAT 3, 8"],
-        ["OBJ-05 Khớp Binance", "BR-12-14, FR-06-09", "UAT 4-7, 9"],
+        ["OBJ-04 Không trade khi chưa duyệt", "BR-12, FR-04, FR-05, FR-12", "UAT 3, 8"],
+        ["OBJ-05 Khớp Binance", "BR-14-16, FR-06-09", "UAT 4-7, 9"],
         ["OBJ-06 Audit đầy đủ", "FR-10-12, NFR-05-07", "UAT 4, 10"],
     ], [2300, 4100, 2960])
 
     doc.add_heading("Phụ lục A - Nguồn tham chiếu", level=1)
     add_bullets(doc, [
-        "Workspace: latest/NXT_Latest_Summary.md - NXT v3.5 portfolio baseline.",
+        "Workspace: latest/NXT_Latest_Summary.md - NXT v3.5 USD-M portfolio baseline.",
+        "Workspace: latest/NXT_Latest_NXT35_USDM_BlockShortAfterLosingLong_System_And_Indicators.docx - promoted detailed rulebook.",
+        "Workspace: latest/NXT_Latest_NXT35_USDM_BlockShortAfterLosingLong_SignalRegression.json - signal-level regression evidence for G-02.",
         "Workspace: app/nxt_signal_app.py - shared scan core, signal history và suggested orders.",
         "Workspace: scripts/daily_nxt_signal_scan.py - Telegram scheduled scanner.",
-        "Binance Spot API - Trading endpoints: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints",
-        "Binance API - Request security: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/request-security",
-        "Binance API - Filters: https://developers.binance.com/docs/binance-spot-api-docs/filters",
-        "Binance USD-M Futures - User Data Streams: https://developers.binance.com/docs/derivatives/usds-margined-futures/user-data-streams",
-        "Binance API - Rate limits/errors: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/limits",
+        "Binance Developer Docs - USD-M Futures introduction: https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/Introduction",
+        "Binance Developer Docs - USD-M Futures common definitions and exchange information: https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/common-definition",
+        "Binance Developer Docs - product catalog: https://developers.binance.com/en/docs/catalog",
     ])
 
     doc.add_heading("Phụ lục B - Definition of Done cho BRD", level=1)
@@ -670,7 +687,7 @@ def build() -> None:
     props.subject = "Business requirements for NXT signal scanning, approval, Binance execution and position monitoring"
     props.author = "Business Analysis"
     props.keywords = "NXT, Binance, BRD, trading automation, signal, approval, monitoring"
-    props.comments = "Draft v0.1 for stakeholder review. Not authorization for live trading."
+    props.comments = "Draft v0.2 for stakeholder review. Desktop-first MVP; not authorization for live trading."
 
     doc.save(OUT)
     print(OUT)

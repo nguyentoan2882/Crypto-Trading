@@ -11,10 +11,13 @@ from openpyxl.utils import get_column_letter
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LATEST_JSON = ROOT / "latest" / "NXT_Latest_NXT35_BTC_BNB_SOL_FundingAdjusted_20K.json"
+LATEST_JSON = Path(os.environ.get(
+    "NXT_LATEST_JSON",
+    ROOT / "latest" / "NXT_Latest_NXT35_USDM_BlockShortAfterLosingLong_FundingAdjusted_20K.json",
+))
 LATEST_XLSX = Path(os.environ.get(
     "NXT_LATEST_FUNDING_XLSX",
-    ROOT / "latest" / "NXT_Latest_NXT35_BTC_BNB_SOL_FundingAdjusted_20K.xlsx",
+    ROOT / "latest" / "NXT_Latest_NXT35_USDM_BlockShortAfterLosingLong_FundingAdjusted_20K.xlsx",
 ))
 ONE_R_DOLLARS = 1_000
 STARTING_EQUITY = 20_000.0

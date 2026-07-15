@@ -24,14 +24,14 @@ NXT_TELEGRAM_BOT_TOKEN=...
 NXT_TELEGRAM_CHAT_ID=...
 NXT_SYMBOLS=BTCUSDT,BNBUSDT,SOLUSDT
 NXT_NOTIFY_NO_SIGNAL=1
-NXT_BINANCE_KLINES_URL=https://data-api.binance.vision/api/v3/klines
+NXT_USDM_KLINES_URL=https://fapi.binance.com/fapi/v1/klines
 ```
 
 Keep `.env` private. It is already ignored by Git.
 
 ## 3. Test manually
 
-From `D:\Workspace\Codex\Crypto trading`:
+From `D:\Workspace\Codex\Investment`:
 
 ```powershell
 $env:NXT_TELEGRAM_BOT_TOKEN="your token"
@@ -46,7 +46,7 @@ If there is no signal, the script prints a no-signal line and sends Telegram whe
 Use Windows Task Scheduler:
 
 1. Create Task.
-2. Trigger: Daily at `00:10`.
+2. Trigger: Daily at `07:10` (Vietnam time).
 3. Action: Start a program.
 4. Program:
 
@@ -57,7 +57,7 @@ powershell.exe
 5. Arguments:
 
 ```text
--NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'D:\Workspace\Codex\Crypto trading'; & 'C:\Users\Admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' scripts\daily_nxt_signal_scan.py"
+-NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'D:\Workspace\Codex\Investment'; & 'C:\Users\Admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' scripts\daily_nxt_signal_scan.py"
 ```
 
 The scanner reads Telegram settings from `.env`, so the token does not need to be placed in the scheduled task command.
@@ -68,12 +68,12 @@ If you install Python globally, `python` is fine. On this machine, the verified 
 C:\Users\Admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe
 ```
 
-Binance native daily candles close at `07:00` Vietnam time (`00:00 UTC`), so the scheduled `07:10` scan runs after the TradingView/Binance 1D candle is final.
+Binance USD-M daily candles close at `07:00` Vietnam time (`00:00 UTC`), so the scheduled `07:10` scan runs after the 1D candle is final.
 
 ## Notes
 
 - The scanner uses the shared local app core in `app\nxt_signal_app.py`, so Telegram and the browser app use the same NXT latest BTC/BNB/SOL logic.
-- The current shared core uses Binance native 1D candles matching TradingView `BINANCE:<symbol>` 1D, SSL14, Runner A, Early-BE 7% checked from the first daily candle after entry and effective from the next daily candle after trigger, anti-immediate-reversal only after runner exit net R >= 0.50R, and LONG-only pullback continuation requiring an SSL bullish flip.
+- The current shared core uses Binance USD-M perpetual 1D candles, SSL14, Runner A, Early-BE 7% checked from the first daily candle after entry and effective from the next daily candle after trigger, anti-immediate-reversal only after runner exit net R >= 0.50R, LONG-only pullback continuation requiring an SSL bullish flip, and blocks a SHORT Primary on the losing pre-TP1 LONG SSL-exit candle plus its next candle.
 - Set `NXT_NOTIFY_NO_SIGNAL=0` if you only want Telegram messages when a new entry signal appears.
 - Signal history is saved at `outputs\nxt_signal_app\signals_history.json`; this also prevents duplicate Telegram alerts for the same signal.
 - Delete that history file only if you intentionally want the scanner/app to be allowed to rediscover and resend old latest signals.
