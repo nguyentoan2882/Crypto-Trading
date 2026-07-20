@@ -143,10 +143,18 @@ def scenario_values(trade: dict, qty_fraction: float, ref_price: float | str, pl
     ]
 
 
-def order_rows_for_trade(global_no: int, trade: dict, plan_by_key: dict[str, dict]) -> list[list]:
+def order_rows_for_trade(global_no: int, trade: dict, plan_by_key: dict[str, dict], runner_rule: dict | None = None) -> list[list]:
     vals = side_values(trade["side"])
     qty = qty_for_trade(trade)
-    half_qty = qty * 0.5
+    runner_rule = runner_rule or {}
+    tp1_fraction = float(runner_rule.get("tp1Fraction", 0.5))
+    partial_fraction = float(runner_rule.get("partialFraction", 0.0))
+    partial_at_r = float(runner_rule.get("partialAtR", 0.0))
+    tail_fraction = float(runner_rule.get("tailFraction", 1.0 - tp1_fraction - partial_fraction))
+    tp1_qty = qty * tp1_fraction
+    partial_qty = qty * partial_fraction
+    tail_qty = qty * tail_fraction
+    partial_price = trade["entryPrice"] + trade["riskPerUnit"] * partial_at_r if trade["side"] == "LONG" else trade["entryPrice"] - trade["riskPerUnit"] * partial_at_r
     symbol = trade["symbol"]
     key = f"{symbol}-{trade['tradeNo']:03d}-{trade['signalTime']}"
     plan = plan_by_key.get(key, {})
@@ -198,14 +206,14 @@ def order_rows_for_trade(global_no: int, trade: dict, plan_by_key: dict[str, dic
         vals["takeProfitSide"],
         "TAKE_PROFIT_MARKET reduceOnly",
         "PARTIAL_CLOSE",
-        half_qty,
-        0.5,
+        tp1_qty,
+        tp1_fraction,
         "",
         trade["tp1"],
         "",
-        f"Close 50% at TP1; target is 2.5 ATR {vals['tpDirection']}.",
+        f"Close {tp1_fraction:.0%} at TP1; target is 2.5 ATR {vals['tpDirection']}.",
         "If TP1 is not hit, this order remains pending until final exit/stop.",
-    ] + scenario_values(trade, 0.5, trade["tp1"], plan))
+    ] + scenario_values(trade, tp1_fraction, trade["tp1"], plan))
     next_order_no = 4
     if trade.get("earlyBeTriggered"):
         rows.append(common + [
@@ -228,18 +236,18 @@ def order_rows_for_trade(global_no: int, trade: dict, plan_by_key: dict[str, dic
         rows.append(common + [
             next_order_no,
             trade["tp1Time"],
-            "TP1_FILLED_CLOSE_50",
+            f"TP1_FILLED_CLOSE_{tp1_fraction:.0%}",
             vals["closeSide"],
             "FILLED_TP1 reduceOnly",
             "PARTIAL_CLOSE",
-            half_qty,
-            0.5,
+            tp1_qty,
+            tp1_fraction,
             trade["tp1"],
             "",
             "",
-            "TP1 filled; 50% position closed.",
-            "Realized gross +0.8333R before trading cost/funding for this half.",
-        ] + scenario_values(trade, 0.5, trade["tp1"], plan))
+            f"TP1 filled; {tp1_fraction:.0%} position closed.",
+            f"Realized gross +{tp1_fraction * 2.5:.4f}R before trading cost/funding.",
+        ] + scenario_values(trade, tp1_fraction, trade["tp1"], plan))
         next_order_no += 1
         rows.append(common + [
             next_order_no,
@@ -248,17 +256,22 @@ def order_rows_for_trade(global_no: int, trade: dict, plan_by_key: dict[str, dic
             vals["stopOrderSide"],
             "STOP_MARKET reduceOnly",
             "PROTECT_RUNNER",
-            half_qty,
-            0.5,
+            tail_qty + partial_qty,
+            tail_fraction + partial_fraction,
             "",
             trade["entryPrice"],
             "",
-            "Cancel initial stop and replace with breakeven stop for remaining 50%.",
+            f"Cancel initial stop and replace with breakeven stop for remaining {tail_fraction + partial_fraction:.0%}.",
             "This is the runner risk-control step after TP1.",
-        ] + scenario_values(trade, 0.5, trade["entryPrice"], plan))
+        ] + scenario_values(trade, tail_fraction + partial_fraction, trade["entryPrice"], plan))
+        next_order_no += 1
+        if partial_fraction:
+            rows.append(common + [
+                next_order_no, trade.get("partialTime") or trade["entryTime"], f"PARTIAL_CLOSE_{partial_fraction:.0%}_AT_{partial_at_r:.1f}R", vals["takeProfitSide"], "TAKE_PROFIT_MARKET reduceOnly", "PARTIAL_CLOSE", partial_qty, partial_fraction, partial_price, "", "", f"Close {partial_fraction:.0%} at {partial_at_r:.1f}R; then leave {tail_fraction:.0%} tail.", "Order remains pending if final exit occurs first.",
+            ] + scenario_values(trade, partial_fraction, partial_price, plan))
         final_order_no = next_order_no + 1
-        final_qty = half_qty
-        final_fraction = 0.5
+        final_qty = tail_qty if trade.get("partialTime") else tail_qty + partial_qty
+        final_fraction = tail_fraction if trade.get("partialTime") else tail_fraction + partial_fraction
     else:
         final_order_no = next_order_no
         final_qty = qty
@@ -270,7 +283,7 @@ def order_rows_for_trade(global_no: int, trade: dict, plan_by_key: dict[str, dic
     elif trade["exitReason"] == "Breakeven stop":
         final_action = "BREAKEVEN_STOP_CLOSE_RUNNER" if trade.get("tp1Time") else "BREAKEVEN_STOP_CLOSE_FULL"
     elif trade["exitReason"].startswith("Runner exit"):
-        final_action = "RUNNER_EXIT_ON_SSL_FLIP"
+        final_action = "RUNNER_EXIT_ON_EMA50" if "EMA50" in trade["exitReason"] else "RUNNER_EXIT_ON_SSL_FLIP"
 
     rows.append(common + [
         final_order_no,
@@ -338,7 +351,7 @@ def main() -> None:
         ws.cell(4, col).value = value
     row_no = 5
     for i, trade in enumerate(latest["trades"], 1):
-        for row in order_rows_for_trade(i, trade, plan_by_key):
+        for row in order_rows_for_trade(i, trade, plan_by_key, latest.get("runnerRule")):
             for col, value in enumerate(row, 1):
                 ws.cell(row_no, col).value = value
             row_no += 1

@@ -362,7 +362,7 @@ def build_workbook(result: dict) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
-    ws["A1"] = "NXT v3.5 BTC BNB SOL - Funding Adjusted Audit"
+    ws["A1"] = f"{result.get('systemVersion', 'NXT v3.5 BTC BNB SOL')} - Funding Adjusted Audit"
     ws["A2"] = "Trading cost is already included in original R via costR. This audit adds Binance USD-M perpetual funding per trade."
     write_row(ws, 4, ["Metric", "Original", "Funding Adjusted", "Delta"])
     pairs = [
@@ -385,6 +385,9 @@ def build_workbook(result: dict) -> None:
     write_row(ws, 19, ["Portfolio Cap 6% BTC-heavy Ending Equity", "", result["portfolioCap6BtcHeavy"]["endingEquity"], ""])
     write_row(ws, 20, ["Portfolio Cap 6% BTC-heavy Max DD %", "", result["portfolioCap6BtcHeavy"]["maxDrawdownPct"], ""])
     style_sheet(ws)
+    ws.column_dimensions["A"].width = 38
+    for col in ["B", "C", "D"]:
+        ws.column_dimensions[col].width = 22
 
     trades_ws = wb.create_sheet("Trades Funding")
     headers = ["Symbol", "No", "Type", "Side", "Signal", "Entry", "Exit", "Entry Price", "Risk/Unit", "TP1 Date", "Gross R", "Trading Cost R", "Original Net R", "Funding R", "Funding Events", "Adjusted Net R", "Adjusted P&L $", "Funding Paid R", "Funding Received R", "Exit Reason"]

@@ -28,11 +28,15 @@ from nxt_usdm_binance_1d_data import fetch_usdm_1d
 APP_DIR = ROOT / "outputs" / "nxt_signal_app"
 HISTORY_PATH = APP_DIR / "signals_history.json"
 SCAN_PATH = APP_DIR / "last_scan.json"
-SYSTEM_NAME = "NXT v3.5 Portfolio BTC+BNB+SOL + Binance USD-M 1D + SSL14 + Runner A + Early-BE 7% + Anti-Immediate-Reversal >=0.50R + LONG-only Pullback Continuation + Block SHORT after losing pre-TP1 LONG SSL exit"
+SYSTEM_NAME = "NXT v3.5 Portfolio BTC+BNB+SOL + Guard directional 30/10@4R/60 + Binance USD-M 1D + SSL14 + Early-BE 7%"
 SYMBOLS = ["BTCUSDT", "BNBUSDT", "SOLUSDT"]
 WARMUP_DATE = native.WARMUP_DATE
 ONE_R_DOLLARS = float(os.environ.get("NXT_ONE_R_DOLLARS", "1000"))
 ANTI_REVERSAL_MIN_RUNNER_R = 0.50
+TP1_FRACTION = 0.30
+PARTIAL_FRACTION = 0.10
+PARTIAL_AT_R = 4.0
+TAIL_FRACTION = 0.60
 
 
 def utc_now() -> str:
@@ -97,7 +101,10 @@ def side_values(side: str) -> dict:
 def build_orders(signal: dict) -> list[dict]:
     vals = side_values(signal["side"])
     qty = ONE_R_DOLLARS / signal["riskPerUnit"]
-    half_qty = qty * 0.5
+    tp1_qty = qty * TP1_FRACTION
+    partial_qty = qty * PARTIAL_FRACTION
+    tail_qty = qty * TAIL_FRACTION
+    partial_price = signal["entryPrice"] + signal["riskPerUnit"] * PARTIAL_AT_R if signal["side"] == "LONG" else signal["entryPrice"] - signal["riskPerUnit"] * PARTIAL_AT_R
     return [
         {
             "step": 1,
@@ -125,9 +132,9 @@ def build_orders(signal: dict) -> list[dict]:
             "date": signal["entryDate"],
             "orderSide": vals["tp"],
             "orderType": "TAKE_PROFIT_MARKET reduceOnly",
-            "quantityBase": half_qty,
+            "quantityBase": tp1_qty,
             "triggerPrice": signal["tp1"],
-            "note": "Close 50% at TP1. If TP1 fills, move remaining stop to breakeven.",
+            "note": "Close 30% at TP1. If TP1 fills, move the remaining 70% stop to breakeven.",
         },
         {
             "step": 4,
@@ -145,23 +152,59 @@ def build_orders(signal: dict) -> list[dict]:
             "date": "When TP1 fills",
             "orderSide": vals["stop"],
             "orderType": "STOP_MARKET reduceOnly",
-            "quantityBase": half_qty,
+            "quantityBase": tail_qty + partial_qty,
             "triggerPrice": signal["entryPrice"],
             "note": "Cancel initial stop and protect the runner at entry price.",
         },
         {
             "step": 6,
-            "action": "RUNNER_EXIT_ON_OPPOSITE_SSL_FLIP",
+            "action": "PLACE_PARTIAL_TP_AT_4R",
+            "date": signal["entryDate"],
+            "orderSide": vals["tp"],
+            "orderType": "TAKE_PROFIT_MARKET reduceOnly",
+            "quantityBase": partial_qty,
+            "triggerPrice": partial_price,
+            "note": "Close 10% at 4R, leaving 60% as the final tail.",
+        },
+        {
+            "step": 7,
+            "action": "TAIL_EXIT_GUARD_DIRECTIONAL",
             "date": "Future daily close",
             "orderSide": vals["close"],
             "orderType": "MARKET reduceOnly",
-            "quantityBase": half_qty,
-            "note": "Close the remaining runner when NXT detects an opposite SSL flip.",
+            "quantityBase": tail_qty,
+            "note": "Use EMA50 close for the 60% tail only when BTC was strongly aligned on the signal candle; otherwise exit the tail on an opposite SSL flip.",
         },
     ]
 
 
-def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
+def ema(values: list[float], period: int) -> list[float | None]:
+    out: list[float | None] = [None] * len(values)
+    if len(values) < period:
+        return out
+    previous = sum(values[:period]) / period
+    out[period - 1] = previous
+    alpha = 2 / (period + 1)
+    for index in range(period, len(values)):
+        previous = values[index] * alpha + previous * (1 - alpha)
+        out[index] = previous
+    return out
+
+
+def btc_regime_by_date(candles: list[dict]) -> dict[str, dict]:
+    rows = enrich_with_ssl_period(candles, 14)
+    ema200 = ema([row["close"] for row in rows], 200)
+    result = {}
+    for index, row in enumerate(rows):
+        indicators_ready = ema200[index] is not None and row.get("ema20") is not None and row.get("ema50") is not None
+        result[row["localDate"]] = {
+            "bull": indicators_ready and row["close"] > ema200[index] and row["close"] > row["ema50"] and row["ema20"] > row["ema50"],
+            "bear": indicators_ready and row["close"] < ema200[index] and row["close"] < row["ema50"] and row["ema20"] < row["ema50"],
+        }
+    return result
+
+
+def latest_signal_for_symbol(symbol: str, candles: list[dict], btc_regime: dict[str, dict]) -> dict | None:
     candles = enrich_with_ssl_period(candles, 14)
     pos = None
     last_profitable_runner_exit = None
@@ -188,11 +231,16 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
                     if not pos["triggered"] and c["high"] >= pos["tp"]:
                         pos["triggered"] = True
                         pos["stop"] = pos["entry"]
-                        pos["realizedR"] += 0.5 * ((pos["tp"] - pos["entry"]) / pos["risk"])
+                        pos["realizedR"] += TP1_FRACTION * ((pos["tp"] - pos["entry"]) / pos["risk"])
+                    if pos["triggered"] and not pos["partialTaken"] and c["high"] >= pos["partialTarget"]:
+                        pos["partialTaken"] = True
+                        pos["realizedR"] += PARTIAL_FRACTION * PARTIAL_AT_R
                     if can_trigger_early_be and not pos["triggered"] and not pos["earlyBeTriggered"] and c["high"] >= pos["entry"] * 1.07:
                         pos["earlyBeTriggered"] = True
                         pos["stop"] = pos["entry"]
-                    if ssl_flip:
+                    if pos["triggered"] and pos["emaTail"] and c["close"] < c["ema50"]:
+                        exit_price, reason = c["close"], "Runner exit: close below EMA50"
+                    elif ssl_flip:
                         exit_price = c["close"]
                         reason = "Runner exit: SSL bearish flip"
             else:
@@ -203,15 +251,20 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
                     if not pos["triggered"] and c["low"] <= pos["tp"]:
                         pos["triggered"] = True
                         pos["stop"] = pos["entry"]
-                        pos["realizedR"] += 0.5 * ((pos["entry"] - pos["tp"]) / pos["risk"])
+                        pos["realizedR"] += TP1_FRACTION * ((pos["entry"] - pos["tp"]) / pos["risk"])
+                    if pos["triggered"] and not pos["partialTaken"] and c["low"] <= pos["partialTarget"]:
+                        pos["partialTaken"] = True
+                        pos["realizedR"] += PARTIAL_FRACTION * PARTIAL_AT_R
                     if can_trigger_early_be and not pos["triggered"] and not pos["earlyBeTriggered"] and c["low"] <= pos["entry"] * 0.93:
                         pos["earlyBeTriggered"] = True
                         pos["stop"] = pos["entry"]
-                    if ssl_flip:
+                    if pos["triggered"] and pos["emaTail"] and c["close"] > c["ema50"]:
+                        exit_price, reason = c["close"], "Runner exit: close above EMA50"
+                    elif ssl_flip:
                         exit_price = c["close"]
                         reason = "Runner exit: SSL bullish flip"
             if exit_price is not None:
-                rem = 0.5 if pos["triggered"] else 1.0
+                rem = (TAIL_FRACTION if pos["partialTaken"] else (TAIL_FRACTION + PARTIAL_FRACTION)) if pos["triggered"] else 1.0
                 rem_r = (exit_price - pos["entry"]) / pos["risk"] if side == "LONG" else (pos["entry"] - exit_price) / pos["risk"]
                 net = pos["realizedR"] + rem * rem_r - base.cost_r(pos["entry"], pos["risk"])
                 if net >= ANTI_REVERSAL_MIN_RUNNER_R and str(reason).startswith("Runner exit"):
@@ -259,6 +312,7 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
             "distanceToEma50Atr": dist,
             "latestClosedDate": c["localDate"],
             "detectedAt": utc_now(),
+            "btcDirectionalGuard": bool((side == "LONG" and btc_regime.get(c["localDate"], {}).get("bull")) or (side == "SHORT" and btc_regime.get(c["localDate"], {}).get("bear"))),
         }
         pos = {
             "side": side,
@@ -268,6 +322,9 @@ def latest_signal_for_symbol(symbol: str, candles: list[dict]) -> dict | None:
             "risk": risk,
             "tp": latest_signal["tp1"],
             "triggered": False,
+            "partialTaken": False,
+            "partialTarget": entry + risk * PARTIAL_AT_R if side == "LONG" else entry - risk * PARTIAL_AT_R,
+            "emaTail": latest_signal["btcDirectionalGuard"],
             "earlyBeTriggered": False,
             "realizedR": 0.0,
         }
@@ -286,11 +343,18 @@ def scan_and_persist() -> dict:
     alerts = []
     checked = []
     errors = []
+    candle_sets = {}
     for symbol in SYMBOLS:
         try:
             candles = fetch_daily_candles(symbol)
+            candle_sets[symbol] = candles
             checked.append({"symbol": symbol, "candles": len(candles), "latestDate": candles[-1]["localDate"] if candles else ""})
-            signal = latest_signal_for_symbol(symbol, candles)
+        except Exception as exc:
+            errors.append({"symbol": symbol, "error": str(exc)})
+    btc_regime = btc_regime_by_date(candle_sets["BTCUSDT"]) if "BTCUSDT" in candle_sets else {}
+    for symbol, candles in candle_sets.items():
+        try:
+            signal = latest_signal_for_symbol(symbol, candles, btc_regime)
             if signal and signal["id"] not in existing:
                 alerts.append(signal)
                 history.append(signal)
