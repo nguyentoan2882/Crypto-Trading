@@ -27,6 +27,7 @@ class CloudConfig:
     supabase_url: str = ""
     supabase_publishable_key: str = ""
     health_token: str = ""
+    notification_mode: str = "disabled"
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     binance_klines_url: str = PUBLIC_BINANCE_KLINES_URL
@@ -51,6 +52,7 @@ class CloudConfig:
             supabase_url=env.get("NXT_SUPABASE_URL", "").strip().rstrip("/"),
             supabase_publishable_key=env.get("NXT_SUPABASE_PUBLISHABLE_KEY", "").strip(),
             health_token=env.get("NXT_HEALTH_TOKEN", "").strip(),
+            notification_mode=env.get("NXT_NOTIFICATION_MODE", "disabled").strip().lower(),
             telegram_bot_token=env.get("NXT_TELEGRAM_BOT_TOKEN", "").strip(),
             telegram_chat_id=env.get("NXT_TELEGRAM_CHAT_ID", "").strip(),
             binance_klines_url=env.get("NXT_USDM_KLINES_URL", PUBLIC_BINANCE_KLINES_URL).strip(),
@@ -72,6 +74,8 @@ class CloudConfig:
             raise ValueError("Only the approved public Binance USD-M klines endpoint is allowed")
         if set(self.symbols) != {"BTCUSDT", "BNBUSDT", "SOLUSDT"}:
             raise ValueError("Shadow symbols must be exactly BTCUSDT, BNBUSDT and SOLUSDT")
+        if self.notification_mode not in {"disabled", "telegram"}:
+            raise ValueError("NXT_NOTIFICATION_MODE must be disabled or telegram")
         env = os.environ if environ is None else environ
         forbidden = [name for name, value in env.items() if value and name.startswith("BINANCE_") and any(marker in name for marker in FORBIDDEN_BINANCE_ENV_MARKERS)]
         if forbidden:

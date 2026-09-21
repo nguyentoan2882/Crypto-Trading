@@ -12,7 +12,7 @@ from unittest import mock
 from wsgiref.simple_server import make_server
 
 from app.nxt_cloud.config import CloudConfig
-from app.nxt_cloud.outbox import PostgresOutbox, SHADOW_DISCLAIMER, SHADOW_PREFIX
+from app.nxt_cloud.outbox import DisabledNotificationOutbox, PostgresOutbox, SHADOW_DISCLAIMER, SHADOW_PREFIX
 from app.nxt_cloud.postgres import PostgresRepository
 from app.nxt_cloud.quantity import render_quantity_calculator
 from app.nxt_cloud.scanner import CloudScanner, DataGateError, validate_candle_sets
@@ -211,6 +211,11 @@ class ConfigSafetyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CloudConfig.from_env({"ROLE": "scanner", "BINANCE_API_KEY": "must-not-exist"})
 
+    def test_notification_mode_defaults_disabled_and_rejects_unknown_mode(self):
+        self.assertEqual("disabled", CloudConfig.from_env({"ROLE": "scanner"}).notification_mode)
+        with self.assertRaises(ValueError):
+            CloudConfig.from_env({"ROLE": "scanner", "NXT_NOTIFICATION_MODE": "auto"})
+
 
 class WebSecurityTests(unittest.TestCase):
     def setUp(self):
@@ -399,6 +404,14 @@ class ScannerControlTests(unittest.TestCase):
 
 
 class OutboxSafetyTests(unittest.TestCase):
+    def test_disabled_mode_never_persists_or_delivers_notifications(self):
+        outbox = DisabledNotificationOutbox()
+        self.assertFalse(outbox.enqueue("cloud-shadow:test:disabled", "hello", {}))
+        self.assertEqual(1, outbox.suppressed)
+        self.assertEqual(0, outbox.flush())
+        with self.assertRaises(ValueError):
+            outbox.enqueue("local:test", "hello", {})
+
     def test_prefix_disclaimer_dedupe_and_delivery(self):
         repo = FakeRepository()
         sent = []

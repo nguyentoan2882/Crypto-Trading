@@ -36,6 +36,24 @@ class TelegramSender:
             raise RuntimeError("Telegram delivery rejected")
 
 
+class DisabledNotificationOutbox:
+    """Discard notifications explicitly while retaining scanner business-state writes."""
+
+    def __init__(self, environment: str = "SHADOW") -> None:
+        if environment != "SHADOW":
+            raise ValueError("disabled cloud notifications only support SHADOW")
+        self.suppressed = 0
+
+    def enqueue(self, delivery_key: str, message: str, metadata: Mapping[str, object]) -> bool:
+        if not delivery_key.startswith("cloud-shadow:"):
+            raise ValueError("cloud delivery keys must use the cloud-shadow namespace")
+        self.suppressed += 1
+        return False
+
+    def flush(self) -> int:
+        return 0
+
+
 class PostgresOutbox:
     def __init__(self, repository: CloudRepository, sender: Callable[[str], None], environment: str = "SHADOW") -> None:
         if environment != "SHADOW":

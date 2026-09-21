@@ -9,3 +9,5 @@ cffi==2.1.1
 pycparser==3.0
 typing-extensions==4.16.0
 tzdata==2026.4
+openpyxl==3.1.5
+python-docx==1.2.0
