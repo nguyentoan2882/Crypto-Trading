@@ -41,7 +41,10 @@ def run_scanner(config: CloudConfig) -> int:
         outbox = DisabledNotificationOutbox(config.environment)
     else:
         outbox = PostgresOutbox(repository, TelegramSender(config.telegram_bot_token, config.telegram_chat_id), config.environment)
-    result = CloudScanner(config, market, repository, outbox).run_once()
+    try:
+        result = CloudScanner(config, market, repository, outbox).run_once()
+    finally:
+        repository.close()
     result["notificationMode"] = config.notification_mode
     print(json.dumps(result, separators=(",", ":"), sort_keys=True))
     return 0 if result["status"] in {"COMPLETED", "SKIPPED_COMPLETED", "SKIPPED_LOCKED"} else 1

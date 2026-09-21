@@ -205,7 +205,20 @@ class PostgresRepository:
                 "SELECT signal_id, symbol, signal_payload AS signal, plan_payload AS plan, position_id, position_payload AS position, acknowledged_actions AS \"acknowledgedActions\", pending_followup AS \"pendingFollowup\" FROM accepted_monitor_subjects WHERE environment = %s",
                 (environment,),
             )
-            return list(cur.fetchall())
+            subjects = list(cur.fetchall())
+        for subject in subjects:
+            pending = subject.get("pendingFollowup") if isinstance(subject, dict) else None
+            if not isinstance(pending, dict):
+                continue
+            payload = dict(pending)
+            subject["pendingFollowup"] = {
+                "recommendation_id": payload.get("recommendationId") or payload.get("recommendation_id"),
+                "action": payload.get("action"),
+                "action_label": payload.get("actionLabel") or payload.get("action_label") or payload.get("action"),
+                "priority": payload.get("priority", 99),
+                "payload": payload,
+            }
+        return subjects
 
     def persist_scan_bundle(self, bundle: Mapping[str, object]) -> None:
         run = bundle["run"]

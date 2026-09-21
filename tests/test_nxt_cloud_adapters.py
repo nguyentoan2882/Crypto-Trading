@@ -104,8 +104,9 @@ class FakeRepository:
 
 
 class FakeCursor:
-    def __init__(self, fetchone_values=None):
+    def __init__(self, fetchone_values=None, fetchall_values=None):
         self.fetchone_values = list(fetchone_values or [])
+        self.fetchall_values = list(fetchall_values or [])
         self.executed = []
 
     def __enter__(self):
@@ -121,7 +122,7 @@ class FakeCursor:
         return self.fetchone_values.pop(0) if self.fetchone_values else None
 
     def fetchall(self):
-        return []
+        return self.fetchall_values
 
 
 class FakeConnection:
@@ -435,6 +436,21 @@ class PostgresAdapterContractTests(unittest.TestCase):
         repository = PostgresRepository("", pool=pool)
         self.assertTrue(repository.ping())
         self.assertEqual(1, pool.open_calls)
+
+    def test_monitor_pending_payload_is_normalized_for_shared_rule_engine(self):
+        pending = {
+            "recommendationId": "rec-1",
+            "action": "MOVE_STOP_TO_BE",
+            "actionLabel": "Move stop",
+            "priority": 4,
+        }
+        cursor = FakeCursor(fetchall_values=[{"signal_id": "signal-1", "pendingFollowup": pending}])
+        repository = PostgresRepository("", pool=FakePool(cursor))
+        subject = repository.accepted_monitor_subjects("SHADOW")[0]
+        normalized = subject["pendingFollowup"]
+        self.assertEqual("rec-1", normalized["recommendation_id"])
+        self.assertEqual("MOVE_STOP_TO_BE", normalized["action"])
+        self.assertEqual(pending, normalized["payload"])
 
     def test_decision_write_uses_transaction_lock_and_parameters(self):
         cursor = FakeCursor([None])
