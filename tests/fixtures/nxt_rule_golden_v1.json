@@ -1,0 +1,207 @@
+{
+  "followupCase": {
+    "candles": [
+      {
+        "close": 100.0,
+        "closed": true,
+        "ema50": 99.0,
+        "high": 101.0,
+        "localDate": "2025-12-31",
+        "low": 98.0,
+        "open": 99.0,
+        "ssl": -1
+      },
+      {
+        "close": 102.0,
+        "closed": true,
+        "ema50": 100.0,
+        "high": 105.0,
+        "localDate": "2026-01-01",
+        "low": 95.0,
+        "open": 100.0,
+        "ssl": 1
+      },
+      {
+        "close": 120.0,
+        "closed": true,
+        "ema50": 105.0,
+        "high": 121.0,
+        "localDate": "2026-01-02",
+        "low": 101.0,
+        "open": 102.0,
+        "ssl": 1
+      }
+    ],
+    "expected": {
+      "action": "TAKE_TP1_30_MOVE_BE",
+      "actionLabel": "CHOT TP1 30% VA MOVE SL 70% CON LAI VE BE SAU KHI XAC NHAN",
+      "candleDate": "2026-01-02",
+      "currentStop": 100.0,
+      "entryPrice": 100.0,
+      "evidence": {
+        "breakeven": 100.0,
+        "high": 121.0,
+        "low": 101.0,
+        "tp1": 120.0
+      },
+      "positionId": null,
+      "priority": 2,
+      "quantity": 10.0,
+      "rationale": "Latest D1 range da cham TP1 120.0.",
+      "recommendationId": "followup:golden:BTCUSDT:2026-01-01:LONG:Primary:2026-01-02:TAKE_TP1_30_MOVE_BE:258af14e58d3d00b",
+      "recommendationOnly": true,
+      "side": "LONG",
+      "signalId": "golden:BTCUSDT:2026-01-01:LONG:Primary",
+      "signalType": "Primary",
+      "state": {
+        "active": true,
+        "earlyBeTriggered": false,
+        "entry": 100.0,
+        "partial4RHit": false,
+        "quantity": 10.0,
+        "stop": 100.0,
+        "tp1": 120.0,
+        "tp1Hit": true
+      },
+      "stateVersion": "258af14e58d3d00b58f722dd6d5870f89a1e586d54d2cf991f09d5242a78a4a1",
+      "status": "Pending",
+      "subjectType": "SIGNAL",
+      "symbol": "BTCUSDT",
+      "theoretical": true,
+      "tp1": 120.0,
+      "trackingStatus": "Accepted - chua Track Position"
+    },
+    "subject": {
+      "acknowledgedActions": [],
+      "plan": {
+        "sizing": {
+          "quantityBase": 10.0
+        }
+      },
+      "signal": {
+        "btcDirectionalGuard": false,
+        "entryDate": "2026-01-01",
+        "entryPrice": 100.0,
+        "initialStop": 90.0,
+        "side": "LONG",
+        "signalType": "Primary",
+        "symbol": "BTCUSDT",
+        "tp1": 120.0
+      },
+      "signal_id": "golden:BTCUSDT:2026-01-01:LONG:Primary"
+    }
+  },
+  "ruleVersion": "NXT-v3.5-GuardDirectional-30-10At4R-60",
+  "schemaVersion": 1,
+  "signalCase": {
+    "cutoffUtc": "2026-07-14T01:00:00Z",
+    "expected": {
+      "BNBUSDT": null,
+      "BTCUSDT": null,
+      "SOLUSDT": {
+        "atr14": 3.511428571428542,
+        "btcDirectionalGuard": true,
+        "distanceToEma50Atr": 0.48732072239054647,
+        "ema20": 76.62091414532365,
+        "ema50": 76.67119190805136,
+        "entryDate": "2026-07-14",
+        "entryPrice": 74.96,
+        "id": "NXT35_USDM_BlockShortAfterLosingLong:SOLUSDT:2026-07-13:SHORT:Primary",
+        "initialStop": 80.22714285714281,
+        "latestClosedDate": "2026-07-13",
+        "orders": [
+          {
+            "action": "OPEN_POSITION",
+            "date": "2026-07-14",
+            "note": "Open full position at the next Binance daily open after the signal candle closes.",
+            "orderSide": "SELL",
+            "orderType": "MARKET_OR_LIMIT_AT_OPEN",
+            "price": 74.96,
+            "quantityBase": 189.8562516951467,
+            "step": 1
+          },
+          {
+            "action": "PLACE_INITIAL_STOP",
+            "date": "2026-07-14",
+            "note": "Protect full position. Stop distance is 1.5 ATR14.",
+            "orderSide": "BUY",
+            "orderType": "STOP_MARKET reduceOnly",
+            "quantityBase": 189.8562516951467,
+            "step": 2,
+            "triggerPrice": 80.22714285714281
+          },
+          {
+            "action": "PLACE_TP1",
+            "date": "2026-07-14",
+            "note": "Close 30% at TP1. If TP1 fills, move the remaining 70% stop to breakeven.",
+            "orderSide": "BUY",
+            "orderType": "TAKE_PROFIT_MARKET reduceOnly",
+            "quantityBase": 56.95687550854401,
+            "step": 3,
+            "triggerPrice": 66.18142857142864
+          },
+          {
+            "action": "EARLY_BE_7PCT",
+            "date": "Next daily candle after post-entry 7% favorable move",
+            "note": "Before TP1, from the first daily candle after entry onward, if LONG High reaches Entry x 1.07 or SHORT Low reaches Entry x 0.93, move the full-position stop to entry from the next daily candle.",
+            "orderSide": "BUY",
+            "orderType": "STOP_MARKET reduceOnly",
+            "quantityBase": 189.8562516951467,
+            "step": 4,
+            "triggerPrice": 74.96
+          },
+          {
+            "action": "AFTER_TP1_MOVE_STOP_TO_BREAKEVEN",
+            "date": "When TP1 fills",
+            "note": "Cancel initial stop and protect the runner at entry price.",
+            "orderSide": "BUY",
+            "orderType": "STOP_MARKET reduceOnly",
+            "quantityBase": 132.8993761866027,
+            "step": 5,
+            "triggerPrice": 74.96
+          },
+          {
+            "action": "PLACE_PARTIAL_TP_AT_4R",
+            "date": "2026-07-14",
+            "note": "Close 10% at 4R, leaving 60% as the final tail.",
+            "orderSide": "BUY",
+            "orderType": "TAKE_PROFIT_MARKET reduceOnly",
+            "quantityBase": 18.985625169514673,
+            "step": 6,
+            "triggerPrice": 53.89142857142875
+          },
+          {
+            "action": "TAIL_EXIT_GUARD_DIRECTIONAL",
+            "date": "Future daily close",
+            "note": "Use EMA50 close for the 60% tail only when BTC was strongly aligned on the signal candle; otherwise exit the tail on an opposite SSL flip.",
+            "orderSide": "BUY",
+            "orderType": "MARKET reduceOnly",
+            "quantityBase": 113.91375101708802,
+            "step": 7
+          }
+        ],
+        "riskPerUnit": 5.2671428571428125,
+        "rsi14": 46.65340237112637,
+        "side": "SHORT",
+        "signalDate": "2026-07-13",
+        "signalType": "Primary",
+        "symbol": "SOLUSDT",
+        "tp1": 66.18142857142864
+      }
+    },
+    "inputs": {
+      "BNBUSDT": {
+        "rowsUsed": 2348,
+        "sha256": "00102FA2679E33BC1841297456774D761689443437A123FECF5E7EC8B6935D83"
+      },
+      "BTCUSDT": {
+        "rowsUsed": 2449,
+        "sha256": "27D55CB9FA42EDE586D4B609A658B12C26A45A9C7C5DD13BEC9827F5D8047D6A"
+      },
+      "SOLUSDT": {
+        "rowsUsed": 2131,
+        "sha256": "F3DE38821DE117968795E2B1E534335CDCA1E783D4C3F7932D1FA88E3EFE4F13"
+      }
+    }
+  }
+}
