@@ -216,8 +216,8 @@ class PostgresRepository:
         with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
             for item in items:
                 cur.execute(
-                    "INSERT INTO followup_recommendations(recommendation_id, environment, signal_id, position_id, candle_date, action, priority, status, payload) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) ON CONFLICT (environment, recommendation_id) DO NOTHING",
-                    (item["recommendationId"], environment, item["signalId"], item.get("positionId"), item["candleDate"], item["action"], item["priority"], item["status"], _json(item)),
+                    "INSERT INTO followup_recommendations(recommendation_id, environment, owner_user_id, signal_id, position_id, candle_date, action, priority, status, payload) SELECT %s,%s,s.owner_user_id,%s,%s,%s,%s,%s,%s,%s::jsonb FROM signals s WHERE s.environment=%s AND s.signal_id=%s ON CONFLICT (environment, recommendation_id) DO NOTHING",
+                    (item["recommendationId"], environment, item["signalId"], item.get("positionId"), item["candleDate"], item["action"], item["priority"], item["status"], _json(item), environment, item["signalId"]),
                 )
 
     def enqueue_outbox(self, environment: str, delivery_key: str, message: str, metadata: Mapping[str, object]) -> bool:
