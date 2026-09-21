@@ -3,12 +3,7 @@ from __future__ import annotations
 import json
 
 from app.nxt_cloud.config import CloudConfig
-from app.nxt_cloud.market import BinanceUsdMMarketData
-from app.nxt_cloud.outbox import PostgresOutbox, TelegramSender
-from app.nxt_cloud.postgres import PostgresRepository
-from app.nxt_cloud.scanner import CloudScanner
 from app.nxt_cloud.web import create_app, gunicorn_options
-from scripts.backtest_nxt32_native_1d_latest import WARMUP_DATE
 
 
 def run_web(config: CloudConfig) -> int:
@@ -32,6 +27,14 @@ def run_web(config: CloudConfig) -> int:
 
 
 def run_scanner(config: CloudConfig) -> int:
+    # Keep scanner-only rule/workbook imports out of the web startup path. The
+    # web image does not need openpyxl merely to serve the API and dashboard.
+    from app.nxt_cloud.market import BinanceUsdMMarketData
+    from app.nxt_cloud.outbox import PostgresOutbox, TelegramSender
+    from app.nxt_cloud.postgres import PostgresRepository
+    from app.nxt_cloud.scanner import CloudScanner
+    from scripts.backtest_nxt32_native_1d_latest import WARMUP_DATE
+
     repository = PostgresRepository(config.database_url)
     market = BinanceUsdMMarketData(WARMUP_DATE, config.binance_klines_url)
     outbox = PostgresOutbox(repository, TelegramSender(config.telegram_bot_token, config.telegram_chat_id), config.environment)

@@ -1,0 +1,9 @@
+# G6 Cloud Build context: only files copied by Dockerfile.
+*
+!.gcloudignore
+!Dockerfile
+!requirements-cloud.lock
+!app/
+!app/**
+!scripts/
+!scripts/**
