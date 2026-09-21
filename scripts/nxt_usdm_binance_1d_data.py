@@ -28,6 +28,20 @@ def _request_klines(url: str, params: dict[str, object]) -> list[list[object]]:
     return payload
 
 
+def _candidate_urls() -> list[str]:
+    configured = os.environ.get("NXT_USDM_KLINES_URLS", "").strip()
+    if configured:
+        values = configured.replace(";", ",").split(",")
+    else:
+        values = [os.environ.get("NXT_USDM_KLINES_URL", DEFAULT_URL)]
+    urls: list[str] = []
+    for value in values:
+        url = value.strip()
+        if url and url not in urls:
+            urls.append(url)
+    return urls or [DEFAULT_URL]
+
+
 def _fetch_range(symbol: str, start: date, end_exclusive: date, url: str) -> list[dict]:
     rows: list[dict] = []
     cursor = _ms_at_utc_midnight(start)
@@ -65,26 +79,56 @@ def _fetch_range(symbol: str, start: date, end_exclusive: date, url: str) -> lis
 def fetch_usdm_1d(symbol: str, start_date: date, end_date: date | None = None) -> list[dict]:
     """Return UTC daily USD-M perpetual candles, including an open current candle when requested."""
     CACHE.mkdir(parents=True, exist_ok=True)
-    url = os.environ.get("NXT_USDM_KLINES_URL", DEFAULT_URL).strip() or DEFAULT_URL
     today = datetime.now(timezone.utc).date()
     end_exclusive = end_date or (today + timedelta(days=1))
+    latest_required = min(end_exclusive - timedelta(days=1), today - timedelta(days=1))
     path = CACHE / f"{symbol}_1d.json"
     cached: list[dict] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
     # Re-fetch a short overlap to repair any interrupted run and refresh the current daily candle.
     refresh_from = max(start_date, today - timedelta(days=45))
-    if not cached:
-        fresh = _fetch_range(symbol, start_date, end_exclusive, url)
-    else:
+    errors: list[str] = []
+    fresh: list[dict] | None = None
+    prefix: list[dict] = []
+    first_cached = None
+    last_cached = None
+    if cached:
         first_cached = datetime.fromtimestamp(int(cached[0]["time"]) / 1000, timezone.utc).date()
         last_cached = datetime.fromtimestamp(int(cached[-1]["time"]) / 1000, timezone.utc).date()
-        if first_cached > start_date:
-            cached = _fetch_range(symbol, start_date, first_cached, url) + cached
         refresh_from = max(start_date, min(refresh_from, last_cached - timedelta(days=2)))
-        fresh = _fetch_range(symbol, refresh_from, end_exclusive, url)
+
+    for url in _candidate_urls():
+        try:
+            prefix = _fetch_range(symbol, start_date, first_cached, url) if first_cached and first_cached > start_date else []
+            fresh = _fetch_range(symbol, refresh_from if cached else start_date, end_exclusive, url)
+            break
+        except Exception as exc:
+            errors.append(f"{url}: {exc}")
+
+    if fresh is None:
+        # A current cache is safe during a transient outage. Never silently
+        # evaluate stale candles because the missing close can change a signal.
+        if not cached or last_cached is None or last_cached < latest_required:
+            cached_label = last_cached.isoformat() if last_cached else "none"
+            detail = " | ".join(errors) or "no endpoint configured"
+            raise RuntimeError(
+                f"USD-M live data unavailable and cache is stale for {symbol}: "
+                f"required {latest_required.isoformat()}, cached {cached_label}. {detail}"
+            )
+        fresh = []
+
+    if prefix:
+        cached = prefix + cached
     merged = {int(row["time"]): row for row in cached}
     merged.update({int(row["time"]): row for row in fresh})
     raw = sorted(merged.values(), key=lambda row: int(row["time"]))
+    last_available = datetime.fromtimestamp(int(raw[-1]["time"]) / 1000, timezone.utc).date() if raw else None
+    if last_available is None or last_available < latest_required:
+        available_label = last_available.isoformat() if last_available else "none"
+        raise RuntimeError(
+            f"USD-M data is stale for {symbol} after refresh: "
+            f"required {latest_required.isoformat()}, available {available_label}."
+        )
     path.write_text(json.dumps(raw), encoding="utf-8")
 
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)

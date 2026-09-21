@@ -27,9 +27,17 @@ node scripts/backtest_htf_pullback.mjs
 Run the local app for the current NXT latest BTC/BNB/SOL scanner:
 
 ```powershell
-& 'C:\Users\Admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' app\nxt_signal_app.py --host 127.0.0.1 --port 8765
+& 'C:\Users\Admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' app\nxt_signal_app.py --host 127.0.0.1 --port 6789
 ```
 
-Open `http://127.0.0.1:8765`, then use `Quet Binance` to scan Binance USD-M perpetual 1D candles. The shared core includes Early-BE 7%, requires an SSL bullish flip for LONG Continuation signals, and blocks a SHORT Primary on the exit candle plus next candle after a losing pre-TP1 LONG SSL bearish-flip exit. The app stores valid signals and suggested order steps in `outputs\nxt_signal_app\signals_history.json`.
+Open `http://127.0.0.1:6789`, then use `Quet Binance` to scan Binance USD-M perpetual 1D candles. The shared core includes Early-BE 7%, requires an SSL bullish flip for LONG Continuation signals, and blocks a SHORT Primary on the exit candle plus next candle after a losing pre-TP1 LONG SSL bearish-flip exit. The app stores valid signals and suggested order steps in `outputs\nxt_signal_app\signals_history.json`.
 
-The scheduled Telegram scanner uses the same app core, so both Telegram alerts and the local app scan the same BTC/BNB/SOL symbols with the same NXT latest rules and write to the same signal history.
+To keep the local app running after Windows sign-in, register its separate startup task once:
+
+```powershell
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\register_nxt_signal_app_task.ps1
+```
+
+The daily Telegram task remains a scan-and-exit job; sharing the scanner core does not make it the web-server process.
+
+The scheduled Telegram scanner uses the same app core, so both Telegram alerts and the local app scan the same BTC/BNB/SOL symbols with the same NXT latest rules and write to the same signal history. After each closed-D1 scan it also evaluates every latest `Accept`: untracked signals receive a clearly theoretical follow-up, tracked positions use user-confirmed values, and Telegram bolds the required action or explicit `KHÔNG CẦN THAO TÁC`.
