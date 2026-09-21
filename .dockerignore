@@ -1,0 +1,17 @@
+.git
+.env
+.env.*
+__pycache__
+*.py[cod]
+*.log
+.pytest_cache
+.venv*
+data_cache
+docs
+latest
+node_modules
+outputs
+runtime
+tests
+cloud/evidence
+cloud/baseline

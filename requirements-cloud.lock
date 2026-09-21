@@ -1,0 +1,11 @@
+gunicorn==26.2.0
+packaging==26.3
+psycopg==3.3.6
+psycopg-binary==3.3.6
+psycopg-pool==3.3.2
+PyJWT==2.14.0
+cryptography==50.0.1
+cffi==2.1.1
+pycparser==3.0
+typing-extensions==4.16.0
+tzdata==2026.4

@@ -41,3 +41,5 @@ To keep the local app running after Windows sign-in, register its separate start
 The daily Telegram task remains a scan-and-exit job; sharing the scanner core does not make it the web-server process.
 
 The scheduled Telegram scanner uses the same app core, so both Telegram alerts and the local app scan the same BTC/BNB/SOL symbols with the same NXT latest rules and write to the same signal history. After each closed-D1 scan it also evaluates every latest `Accept`: untracked signals receive a clearly theoretical follow-up, tracked positions use user-confirmed values, and Telegram bolds the required action or explicit `KHÔNG CẦN THAO TÁC`.
+
+Cloud-shadow development is isolated under `app/nxt_cloud/`. Its local-only P3 runtime and security contract is documented in `cloud/P3_LOCAL_CLOUD_ADAPTERS.md`; it does not replace or modify the Windows runtime.
