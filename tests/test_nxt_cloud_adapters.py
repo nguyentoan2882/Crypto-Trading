@@ -213,8 +213,11 @@ class WebSecurityTests(unittest.TestCase):
         status, _, body = wsgi_call(self.app, path="/healthz")
         self.assertEqual(200, status)
         self.assertTrue(json.loads(body)["alive"])
+        self.assertEqual(200, wsgi_call(self.app, path="/health")[0])
         self.assertEqual(401, wsgi_call(self.app, path="/readyz")[0])
         self.assertEqual(200, wsgi_call(self.app, path="/readyz", headers={"X-NXT-Health-Token": "health-secret"})[0])
+        self.assertEqual(401, wsgi_call(self.app, path="/ready")[0])
+        self.assertEqual(200, wsgi_call(self.app, path="/ready", headers={"X-NXT-Health-Token": "health-secret"})[0])
 
     def test_business_routes_require_valid_mfa_owner(self):
         self.assertEqual(401, wsgi_call(self.app, path="/api/state")[0])

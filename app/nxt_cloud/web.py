@@ -83,9 +83,9 @@ class CloudWebApp:
     def __call__(self, environ: dict, start_response: Callable) -> list[bytes]:
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "/")
-        if method == "GET" and path == "/healthz":
+        if method == "GET" and path in {"/healthz", "/health"}:
             return _respond(start_response, HTTPStatus.OK, {"alive": True, "environment": "SHADOW"})
-        if method == "GET" and path == "/readyz":
+        if method == "GET" and path in {"/readyz", "/ready"}:
             if self.config.health_token and environ.get("HTTP_X_NXT_HEALTH_TOKEN", "") != self.config.health_token:
                 return _respond(start_response, HTTPStatus.UNAUTHORIZED, {"ready": False})
             ready = bool(self.repository.ping() and self.repository.schema_current())
