@@ -3,7 +3,7 @@
 Date: 2026-09-21
 Branch: `codex/nxt-cloud-shadow`
 G3 authority parent: `2ced77b`
-Decision state: **P4 CODE COMPLETE — REAL POSTGRESQL REHEARSAL PENDING**
+Decision state: **P4 COMPLETE — READY FOR G4 REVIEW**
 
 ## Delivered scope
 
@@ -28,14 +28,20 @@ No cloud project, database, secret, scheduler, registry, image, service or job w
 | Production SQLite dry-run | PASS; source unchanged |
 | Production SQLite SHA-256 during dry-run | `4fdbe43d20b6fc5a0d6aef16ea7a1706a7a8b2240e797a252db392261b6da78e` |
 | Source inventory | 127 scans, 8 signals, 8 plans, 11 decisions, 27 follow-ups, 47 audit events; 181 mapped target rows |
+| Real PostgreSQL engine | PASS on PostgreSQL 15.18, disposable localhost cluster |
+| Migration idempotency | PASS; first apply `[1]`, second apply `[]` |
+| Import idempotency | PASS; all per-table counts unchanged after second import |
+| Provenance retention | PASS; 228/228 local rows retained in `legacy_import_records` |
+| Backup/restore | PASS; custom-format `pg_dump`/`pg_restore`, all 11 checked table counts equal |
+| Real readiness | PASS; `/readyz` returned HTTP `200 OK` with `{"ready":true}` |
 | Local production health after verification | PASS; HTTP 200, 8 signals, latest scan `Completed` |
 | `git diff --check` and Python compile | PASS |
 
-## Host limitation
+## Rehearsal isolation
 
-This host has no Docker/Podman/nerdctl, PostgreSQL server, `psql`, `pg_dump` or `pg_restore`, and no installed WSL distribution. Therefore the migration SQL, import/re-import and backup/restore harness could not be executed against a real PostgreSQL engine here.
+The current PostgreSQL 15.19 download was blocked upstream with HTTP 403, so the supported PostgreSQL 15.18 Windows installer was used after its SHA-256 matched `8D1AC971810B819D861AC6BC47CEAA87A23251C9194F66255EC4AC208D15D688`.
 
-That limitation blocks P4 exit/G4 readiness. It does not justify creating a Supabase project: the pending verification is explicitly local and disposable.
+The successful run used a separate user-owned cluster bound only to `127.0.0.1:55432`. It created random `nxt_rehearsal_*` and `nxt_restore_*` databases, dropped both in `finally`, removed the password file and stopped the cluster. The production SQLite file remained read-only and unchanged.
 
 ## Artifact hashes
 
@@ -43,10 +49,10 @@ That limitation blocks P4 exit/G4 readiness. It does not justify creating a Supa
 | --- | --- |
 | `cloud/migrations/0001_shadow_schema.sql` | `AE88A2F386AA5C1A0E6507A3F5A2DF3D3E1EBD3C5AE2FB5B96037471E68FD1D2` |
 | `scripts/nxt_cloud_migrate.py` | `386E7480A849147590E8E6873FF7F359782793419E3A6B77F68BC7C7E641224D` |
-| `scripts/nxt_cloud_import_sqlite.py` | `9DA8F336D75EC49549B7CAD1B72B47A4039A79BDA919D7D0EC2DE75634660958` |
-| `scripts/rehearse_nxt_cloud_postgres.py` | `94893EFCF2BDBC89ADA12D18F8DB9A6AE53D4F9CB3C40EA41F26A1F7711DA190` |
+| `scripts/nxt_cloud_import_sqlite.py` | `C9B3CC4B4512671D11BFC405A96C1CDB32DC823ECC90E026574B15FA2245D0ED` |
+| `scripts/rehearse_nxt_cloud_postgres.py` | `0B97EDB7AC5453C55846194FA42E9038CE6E86A4C8F67FC377EC7B47D66B5C8D` |
 | `app/nxt_cloud/postgres.py` | `94187671BD78DD7120D344F6EB5B862214B1AAA596C3C70C75FEB10B3537171A` |
 
 ## Next authority boundary
 
-Do not approve or start P5/cloud provisioning yet. First run the documented disposable PostgreSQL rehearsal on a Docker/PostgreSQL-capable local host, attach the output, verify `/readyz`, and close P4. G4 would then authorize only the separately reviewed P5 cloud-foundation scope.
+This evidence supports G4 review. Until G4 is explicitly approved, do not create a Supabase/GCP project, secret, registry, service, scheduler or deployment. G4 would authorize only the separately reviewed P5 cloud-foundation scope.

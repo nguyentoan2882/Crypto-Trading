@@ -79,13 +79,17 @@ class CopyOnlyImporterTests(unittest.TestCase):
     def test_invalid_or_orphan_business_rows_are_retained_only_as_legacy(self):
         rows = {
             "signals": [],
-            "decisions": [{"decision_id": "d1", "signal_id": "missing", "decision": "Accept"}],
+            "decisions": [
+                {"decision_id": "d1", "signal_id": "missing", "decision": "Accept"},
+                {"decision_id": "d2", "signal_id": "missing", "decision": "Reject"},
+            ],
             "manual_positions": [{"position_id": "p1", "signal_id": "missing", "entry_price": 0, "quantity": 1}],
         }
         batches = build_batches(rows, "owner-1")
         self.assertEqual([], batches[3][1])
         self.assertEqual([], batches[4][1])
-        self.assertEqual(2, len(batches[-1][1]))
+        self.assertEqual(3, len(batches[-1][1]))
+        self.assertEqual({"d1", "d2", "p1"}, {item[2] for item in batches[-1][1]})
 
 
 if __name__ == "__main__":

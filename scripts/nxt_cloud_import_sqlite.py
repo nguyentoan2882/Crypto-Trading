@@ -72,12 +72,22 @@ def source_manifest(path: Path, rows: dict[str, list[dict[str, Any]]]) -> dict[s
 
 
 def _legacy_rows(rows: dict[str, list[dict[str, Any]]], owner: str) -> Iterable[tuple[Any, ...]]:
+    primary_keys = {
+        "settings": "key",
+        "equity_history": "id",
+        "scan_runs": "run_id",
+        "signals": "signal_id",
+        "trade_plans": "plan_id",
+        "decisions": "decision_id",
+        "manual_positions": "position_id",
+        "followup_recommendations": "recommendation_id",
+        "recommendations": "recommendation_id",
+        "audit_events": "event_id",
+    }
     for table, items in sorted(rows.items()):
         for index, row in enumerate(items):
-            source_key = next(
-                (str(row[key]) for key in ("key", "id", "run_id", "signal_id", "plan_id", "decision_id", "position_id", "recommendation_id", "event_id") if row.get(key) is not None),
-                str(index),
-            )
+            key_name = primary_keys.get(table, "")
+            source_key = str(row.get(key_name)) if key_name and row.get(key_name) is not None else str(index)
             yield (owner, table, source_key, _json_text(row))
 
 
