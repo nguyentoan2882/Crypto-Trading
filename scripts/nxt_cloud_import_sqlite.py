@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
 import json
+import math
+import numbers
 import sqlite3
 from collections.abc import Iterable
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 
 CORE_TABLES = (
@@ -175,26 +179,110 @@ def apply_batches(database_url: str, batches: list[tuple[str, list[tuple[Any, ..
     return counts
 
 
+def build_database_url(host: str, user: str, password: str, port: int = 5432, database: str = "postgres") -> str:
+    if not host or not user or not password:
+        raise ValueError("database host, user and password are required")
+    return (
+        f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}/"
+        f"{quote(database, safe='')}?sslmode=require"
+    )
+
+
+def _sql_literal(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, numbers.Integral):
+        return str(value)
+    if isinstance(value, numbers.Real):
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            raise ValueError("non-finite numeric value cannot be emitted as SQL")
+        return repr(numeric)
+    text = str(value).replace("'", "''")
+    return f"'{text}'"
+
+
+def _render_statement(query: str, values: tuple[Any, ...]) -> str:
+    parts = query.split("%s")
+    if len(parts) != len(values) + 1:
+        raise ValueError("SQL placeholder count does not match value count")
+    rendered = [parts[0]]
+    for value, suffix in zip(values, parts[1:]):
+        rendered.extend((_sql_literal(value), suffix))
+    return "".join(rendered) + ";"
+
+
+def emit_sql(path: Path, batches: list[tuple[str, list[tuple[Any, ...]]]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    statements = [
+        "BEGIN;",
+        "SELECT pg_advisory_xact_lock(hashtext('nxt-cloud-sqlite-import'));",
+    ]
+    for index, (query, values) in enumerate(batches, start=1):
+        statements.extend(_render_statement(query, value) for value in values)
+        counts[f"batch{index}"] = len(values)
+    statements.extend((
+        "COMMIT;",
+        "SELECT 'scan_runs' AS table_name, count(*) AS row_count FROM scan_runs WHERE environment = 'SHADOW' "
+        "UNION ALL SELECT 'signals', count(*) FROM signals WHERE environment = 'SHADOW' "
+        "UNION ALL SELECT 'trade_plans', count(*) FROM trade_plans WHERE environment = 'SHADOW' "
+        "UNION ALL SELECT 'decisions', count(*) FROM decisions WHERE environment = 'SHADOW' "
+        "UNION ALL SELECT 'manual_positions', count(*) FROM manual_positions WHERE environment = 'SHADOW' "
+        "UNION ALL SELECT 'followup_recommendations', count(*) FROM followup_recommendations WHERE environment = 'SHADOW' "
+        "UNION ALL SELECT 'legacy_import_records', count(*) FROM legacy_import_records WHERE environment = 'SHADOW' "
+        "ORDER BY table_name;",
+    ))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(statements) + "\n", encoding="utf-8")
+    return counts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Copy local NXT SQLite data into a SHADOW PostgreSQL database.")
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--owner-user-id", required=True)
     parser.add_argument("--database-url")
+    parser.add_argument("--database-host")
+    parser.add_argument("--database-user")
+    parser.add_argument("--database-port", type=int, default=5432)
+    parser.add_argument("--database-name", default="postgres")
+    parser.add_argument("--prompt-password", action="store_true", help="Read the database password from a hidden terminal prompt.")
     parser.add_argument("--apply", action="store_true", help="Write to PostgreSQL; otherwise perform a read-only dry run.")
+    parser.add_argument("--emit-sql", type=Path, help="Write a transactional, idempotent SQL import file instead of connecting.")
     args = parser.parse_args()
+    if args.apply and args.emit_sql:
+        parser.error("--apply and --emit-sql are mutually exclusive")
+    if args.database_url and args.prompt_password:
+        parser.error("--database-url and --prompt-password are mutually exclusive")
     before = hashlib.sha256(args.source.read_bytes()).hexdigest()
     rows = read_source(args.source)
     manifest = source_manifest(args.source, rows)
     batches = build_batches(rows, args.owner_user_id)
     manifest["targetRows"] = sum(len(values) for _, values in batches[:-1])
     if args.apply:
-        if not args.database_url:
-            parser.error("--database-url is required with --apply")
-        manifest["attempted"] = apply_batches(args.database_url, batches)
+        database_url = args.database_url
+        if args.prompt_password:
+            if not args.database_host or not args.database_user:
+                parser.error("--database-host and --database-user are required with --prompt-password")
+            password = getpass.getpass("Supabase database password (input hidden): ")
+            database_url = build_database_url(
+                args.database_host,
+                args.database_user,
+                password,
+                args.database_port,
+                args.database_name,
+            )
+        if not database_url:
+            parser.error("--database-url or --prompt-password is required with --apply")
+        manifest["attempted"] = apply_batches(database_url, batches)
+    elif args.emit_sql:
+        manifest["attempted"] = emit_sql(args.emit_sql, batches)
     after = hashlib.sha256(args.source.read_bytes()).hexdigest()
     if before != after:
         raise RuntimeError("source SQLite file changed during copy-only import")
-    manifest["mode"] = "APPLY" if args.apply else "DRY_RUN"
+    manifest["mode"] = "APPLY" if args.apply else "EMIT_SQL" if args.emit_sql else "DRY_RUN"
     manifest["sourceUnchanged"] = True
     manifest["generatedAt"] = datetime.now(timezone.utc).isoformat()
     print(json.dumps(manifest, indent=2, sort_keys=True))

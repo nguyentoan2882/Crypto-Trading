@@ -7,7 +7,14 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from scripts.nxt_cloud_import_sqlite import build_batches, read_source, source_manifest
+from scripts.nxt_cloud_import_sqlite import (
+    _render_statement,
+    build_database_url,
+    build_batches,
+    emit_sql,
+    read_source,
+    source_manifest,
+)
 from scripts.nxt_cloud_migrate import migration_files
 
 
@@ -45,6 +52,26 @@ class MigrationContractTests(unittest.TestCase):
 
 
 class CopyOnlyImporterTests(unittest.TestCase):
+    def test_database_url_percent_encodes_credentials_and_requires_tls(self):
+        self.assertEqual(
+            build_database_url("db.example", "postgres.project", "p@ss/word"),
+            "postgresql://postgres.project:p%40ss%2Fword@db.example:5432/postgres?sslmode=require",
+        )
+
+    def test_sql_emitter_quotes_values_and_wraps_transaction(self):
+        self.assertEqual(
+            _render_statement("INSERT INTO demo(a,b,c) VALUES (%s,%s,%s)", ("O'Reilly", None, 3)),
+            "INSERT INTO demo(a,b,c) VALUES ('O''Reilly',NULL,3);",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "import.sql"
+            counts = emit_sql(target, [("INSERT INTO demo(a) VALUES (%s) ON CONFLICT DO NOTHING", [("x",)])])
+            sql = target.read_text(encoding="utf-8")
+            self.assertEqual(counts, {"batch1": 1})
+            self.assertTrue(sql.startswith("BEGIN;\nSELECT pg_advisory_xact_lock"))
+            self.assertIn("INSERT INTO demo(a) VALUES ('x') ON CONFLICT DO NOTHING;", sql)
+            self.assertIn("COMMIT;", sql)
+
     def test_read_only_source_and_deterministic_idempotent_batches(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.sqlite"
