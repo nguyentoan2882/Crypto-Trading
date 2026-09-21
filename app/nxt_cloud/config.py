@@ -24,6 +24,8 @@ class CloudConfig:
     jwt_issuer: str = ""
     jwt_audience: str = "authenticated"
     jwt_jwks_url: str = ""
+    supabase_url: str = ""
+    supabase_publishable_key: str = ""
     health_token: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
@@ -46,6 +48,8 @@ class CloudConfig:
             jwt_issuer=env.get("NXT_JWT_ISSUER", "").strip(),
             jwt_audience=env.get("NXT_JWT_AUDIENCE", "authenticated").strip(),
             jwt_jwks_url=env.get("NXT_JWT_JWKS_URL", "").strip(),
+            supabase_url=env.get("NXT_SUPABASE_URL", "").strip().rstrip("/"),
+            supabase_publishable_key=env.get("NXT_SUPABASE_PUBLISHABLE_KEY", "").strip(),
             health_token=env.get("NXT_HEALTH_TOKEN", "").strip(),
             telegram_bot_token=env.get("NXT_TELEGRAM_BOT_TOKEN", "").strip(),
             telegram_chat_id=env.get("NXT_TELEGRAM_CHAT_ID", "").strip(),

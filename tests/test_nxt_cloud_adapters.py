@@ -163,6 +163,8 @@ def cloud_config(**updates) -> CloudConfig:
         "allowed_origins": ("https://nxt.example",),
         "owner_user_ids": ("owner-1",),
         "owner_emails": ("owner@example.com",),
+        "supabase_url": "https://project.supabase.co",
+        "supabase_publishable_key": "public-test-key",
         "health_token": "health-secret",
     }
     values.update(updates)
@@ -232,6 +234,30 @@ class WebSecurityTests(unittest.TestCase):
         self.assertEqual(401, wsgi_call(weak, path="/api/state", token="ok")[0])
         outsider = CloudWebApp(cloud_config(), self.repo, FakeVerifier({"sub": "other", "email": "other@example.com", "aal": "aal2"}))
         self.assertEqual(401, wsgi_call(outsider, path="/api/state", token="ok")[0])
+
+    def test_browser_login_is_public_but_session_requires_aal2_owner(self):
+        status, headers, body = wsgi_call(self.app, path="/login")
+        self.assertEqual(200, status)
+        self.assertIn("Mật khẩu Supabase Auth".encode("utf-8"), body)
+        self.assertIn("connect-src 'self' https://project.supabase.co", headers["Content-Security-Policy"])
+
+        status, headers, body = wsgi_call(
+            self.app,
+            method="POST",
+            path="/auth/session",
+            token="ok",
+            body={},
+            headers={"Origin": "https://nxt.example"},
+        )
+        self.assertEqual(200, status)
+        self.assertIn("__Host-nxt_session=ok", headers["Set-Cookie"])
+        self.assertEqual("aal2", json.loads(body)["aal"])
+
+        weak = CloudWebApp(cloud_config(), self.repo, FakeVerifier({"sub": "owner-1", "email": "owner@example.com", "aal": "aal1"}))
+        self.assertEqual(
+            401,
+            wsgi_call(weak, method="POST", path="/auth/session", token="ok", body={}, headers={"Origin": "https://nxt.example"})[0],
+        )
 
     def test_cookie_write_requires_origin_csrf_and_idempotency(self):
         cookie = "__Host-nxt_session=ok; nxt_csrf=abc"
