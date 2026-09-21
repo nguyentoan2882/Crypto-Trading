@@ -144,6 +144,12 @@ class FakeConnection:
 class FakePool:
     def __init__(self, cursor):
         self._connection = FakeConnection(cursor)
+        self.closed = False
+        self.open_calls = 0
+
+    def open(self):
+        self.closed = False
+        self.open_calls += 1
 
     def connection(self):
         return self._connection
@@ -384,6 +390,13 @@ class OutboxSafetyTests(unittest.TestCase):
 
 
 class PostgresAdapterContractTests(unittest.TestCase):
+    def test_pool_opens_lazily_in_serving_process(self):
+        pool = FakePool(FakeCursor([{"ok": 1}]))
+        pool.closed = True
+        repository = PostgresRepository("", pool=pool)
+        self.assertTrue(repository.ping())
+        self.assertEqual(1, pool.open_calls)
+
     def test_decision_write_uses_transaction_lock_and_parameters(self):
         cursor = FakeCursor([None])
         repository = PostgresRepository("", pool=FakePool(cursor))

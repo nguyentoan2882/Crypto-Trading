@@ -33,7 +33,24 @@ class PostgresRepository:
             from psycopg_pool import ConnectionPool
         except ImportError as exc:
             raise RuntimeError("psycopg[binary,pool] is required for PostgreSQL") from exc
-        self.pool = ConnectionPool(database_url, min_size=0, max_size=4, kwargs={"row_factory": dict_row}, open=True)
+        self.pool = ConnectionPool(
+            database_url,
+            min_size=0,
+            max_size=4,
+            timeout=10,
+            kwargs={"row_factory": dict_row, "connect_timeout": 10},
+            open=False,
+        )
+
+    @contextmanager
+    def _connection(self):
+        # Gunicorn may construct the WSGI app before forking a worker. Opening
+        # psycopg_pool background threads lazily avoids inheriting a broken
+        # pre-fork pool in the serving process.
+        if getattr(self.pool, "closed", False):
+            self.pool.open()
+        with self.pool.connection() as conn:
+            yield conn
 
     def close(self) -> None:
         close = getattr(self.pool, "close", None)
@@ -42,7 +59,7 @@ class PostgresRepository:
 
     def ping(self) -> bool:
         try:
-            with self.pool.connection() as conn, conn.cursor() as cur:
+            with self._connection() as conn, conn.cursor() as cur:
                 cur.execute("SELECT 1 AS ok")
                 row = cur.fetchone()
                 return bool(row and (row.get("ok") if isinstance(row, dict) else row[0]) == 1)
@@ -51,7 +68,7 @@ class PostgresRepository:
 
     def schema_current(self) -> bool:
         try:
-            with self.pool.connection() as conn, conn.cursor() as cur:
+            with self._connection() as conn, conn.cursor() as cur:
                 cur.execute("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations")
                 row = cur.fetchone()
                 version = row.get("version") if isinstance(row, dict) else row[0]
@@ -71,7 +88,7 @@ class PostgresRepository:
         query = LIST_QUERIES.get(kind)
         if query is None:
             raise ValueError("unsupported record type")
-        with self.pool.connection() as conn, conn.cursor() as cur:
+        with self._connection() as conn, conn.cursor() as cur:
             cur.execute(query, (owner_user_id, limit, offset))
             return list(cur.fetchall())
 
@@ -103,7 +120,7 @@ class PostgresRepository:
         decision = str(payload["decision"])
         if decision not in {"Accept", "Reject", "Watchlist"}:
             raise ValueError("decision must be Accept, Reject or Watchlist")
-        with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             self._lock_idempotency(cur, owner_user_id, idempotency_key, operation)
             prior = self._existing_idempotent(cur, owner_user_id, idempotency_key, operation)
             if prior:
@@ -123,7 +140,7 @@ class PostgresRepository:
         entry_price = float(payload["entryPrice"])
         if quantity <= 0 or entry_price <= 0:
             raise ValueError("quantity and entryPrice must be positive")
-        with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             self._lock_idempotency(cur, owner_user_id, idempotency_key, operation)
             prior = self._existing_idempotent(cur, owner_user_id, idempotency_key, operation)
             if prior:
@@ -142,7 +159,7 @@ class PostgresRepository:
         outcome = str(payload["outcome"])
         if outcome not in {"Applied", "Dismissed", "NotApplicable"}:
             raise ValueError("invalid follow-up outcome")
-        with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             self._lock_idempotency(cur, owner_user_id, idempotency_key, operation)
             prior = self._existing_idempotent(cur, owner_user_id, idempotency_key, operation)
             if prior:
@@ -159,7 +176,7 @@ class PostgresRepository:
 
     @contextmanager
     def scan_lock(self, lock_key: str):
-        with self.pool.connection() as conn, conn.cursor() as cur:
+        with self._connection() as conn, conn.cursor() as cur:
             cur.execute("SELECT pg_try_advisory_lock(hashtext(%s)) AS acquired", (lock_key,))
             row = cur.fetchone()
             acquired = bool(row.get("acquired") if isinstance(row, dict) else row[0])
@@ -170,7 +187,7 @@ class PostgresRepository:
                     cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", (lock_key,))
 
     def completed_scan_exists(self, environment: str, candle_date: str, rule_version: str) -> bool:
-        with self.pool.connection() as conn, conn.cursor() as cur:
+        with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT 1 FROM scan_runs WHERE environment = %s AND candle_date = %s AND rule_version = %s AND status = 'COMPLETED' LIMIT 1",
                 (environment, candle_date, rule_version),
@@ -178,12 +195,12 @@ class PostgresRepository:
             return cur.fetchone() is not None
 
     def existing_signal_ids(self, environment: str) -> set[str]:
-        with self.pool.connection() as conn, conn.cursor() as cur:
+        with self._connection() as conn, conn.cursor() as cur:
             cur.execute("SELECT signal_id FROM signals WHERE environment = %s", (environment,))
             return {str(row.get("signal_id") if isinstance(row, dict) else row[0]) for row in cur.fetchall()}
 
     def accepted_monitor_subjects(self, environment: str) -> Sequence[Mapping[str, object]]:
-        with self.pool.connection() as conn, conn.cursor() as cur:
+        with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT signal_id, symbol, signal_payload AS signal, plan_payload AS plan, position_id, position_payload AS position, acknowledged_actions AS \"acknowledgedActions\", pending_followup AS \"pendingFollowup\" FROM accepted_monitor_subjects WHERE environment = %s",
                 (environment,),
@@ -192,7 +209,7 @@ class PostgresRepository:
 
     def persist_scan_bundle(self, bundle: Mapping[str, object]) -> None:
         run = bundle["run"]
-        with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO scan_runs(run_id, environment, owner_user_id, candle_date, status, source, input_hash, rule_version, started_at, finished_at, errors_json) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) ON CONFLICT (environment, candle_date, rule_version, source) DO NOTHING",
                 (run["runId"], run["environment"], run.get("ownerUserId"), run["candleDate"], run["status"], run["source"], run["inputHash"], run["ruleVersion"], run["startedAt"], run["finishedAt"], _json(run.get("errors", []))),
@@ -213,7 +230,7 @@ class PostgresRepository:
                 )
 
     def persist_followup_recommendations(self, environment: str, items: Sequence[Mapping[str, object]]) -> None:
-        with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             for item in items:
                 cur.execute(
                     "INSERT INTO followup_recommendations(recommendation_id, environment, owner_user_id, signal_id, position_id, candle_date, action, priority, status, payload) SELECT %s,%s,s.owner_user_id,%s,%s,%s,%s,%s,%s,%s::jsonb FROM signals s WHERE s.environment=%s AND s.signal_id=%s ON CONFLICT (environment, recommendation_id) DO NOTHING",
@@ -221,7 +238,7 @@ class PostgresRepository:
                 )
 
     def enqueue_outbox(self, environment: str, delivery_key: str, message: str, metadata: Mapping[str, object]) -> bool:
-        with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO notification_outbox(outbox_id, environment, delivery_key, channel, message, metadata, status) VALUES (%s,%s,%s,'TELEGRAM',%s,%s::jsonb,'PENDING') ON CONFLICT (environment, delivery_key) DO NOTHING RETURNING outbox_id",
                 (str(uuid.uuid4()), environment, delivery_key, message, _json(metadata)),
@@ -229,7 +246,7 @@ class PostgresRepository:
             return cur.fetchone() is not None
 
     def pending_outbox(self, environment: str, limit: int = 20) -> Sequence[Mapping[str, object]]:
-        with self.pool.connection() as conn, conn.cursor() as cur:
+        with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT outbox_id, delivery_key, message, metadata, attempts FROM notification_outbox WHERE environment = %s AND status IN ('PENDING','FAILED') ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT %s",
                 (environment, limit),
@@ -237,9 +254,9 @@ class PostgresRepository:
             return list(cur.fetchall())
 
     def mark_outbox_delivered(self, outbox_id: str) -> None:
-        with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             cur.execute("UPDATE notification_outbox SET status='DELIVERED', delivered_at=now(), attempts=attempts+1, last_error_code=NULL WHERE outbox_id=%s", (outbox_id,))
 
     def mark_outbox_failed(self, outbox_id: str, error_code: str) -> None:
-        with self.pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             cur.execute("UPDATE notification_outbox SET status='FAILED', attempts=attempts+1, last_error_code=%s WHERE outbox_id=%s", (error_code[:80], outbox_id))
