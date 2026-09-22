@@ -542,6 +542,7 @@ class ScannerControlTests(unittest.TestCase):
         self.assertEqual("COMPLETED", result["status"])
         self.assertEqual("manual-20260922", result["forceRunId"])
         self.assertEqual(1, len(self.repo.bundles))
+        self.assertEqual("BINANCE_USDM_PUBLIC_1D:FORCE:MANUAL-20260922", self.repo.bundles[0]["run"]["source"])
         self.assertIn(":force:manual-20260922", self.outbox.items[0][0])
         self.assertEqual("manual-20260922", self.outbox.items[0][2]["forceRunId"])
 

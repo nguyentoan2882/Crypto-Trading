@@ -71,6 +71,7 @@ class CloudScanner:
         candle_date, manifests = validate_candle_sets(candle_sets, self.config.symbols, expected_date)
         lock_key = f"nxt:{self.config.environment}:{candle_date}:{self.config.rule_version}"
         force_suffix = f":force:{self.config.force_run_id}" if self.config.force_run_id else ""
+        scan_source = f"BINANCE_USDM_PUBLIC_1D{force_suffix.upper()}"
         with self.repository.scan_lock(lock_key) as acquired:
             if not acquired:
                 return {"status": "SKIPPED_LOCKED", "candleDate": candle_date}
@@ -104,7 +105,7 @@ class CloudScanner:
                     "ownerUserId": self.config.owner_user_ids[0] if self.config.owner_user_ids else None,
                     "candleDate": candle_date,
                     "status": "COMPLETED",
-                    "source": "BINANCE_USDM_PUBLIC_1D",
+                    "source": scan_source,
                     "inputHash": input_hash,
                     "ruleVersion": self.config.rule_version,
                     "startedAt": detected_at,
