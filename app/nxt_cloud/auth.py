@@ -75,8 +75,8 @@ def authenticate(environ: dict, verifier: TokenVerifier, config: CloudConfig) ->
     user_id = str(claims.get("sub", ""))
     email = str(claims.get("email", "")).lower()
     aal = str(claims.get("aal", ""))
-    if not user_id or aal != "aal2":
-        raise AuthError("MFA assurance level aal2 is required")
+    if not user_id or aal not in {"aal1", "aal2"}:
+        raise AuthError("password-authenticated assurance level aal1 or higher is required")
     if config.owner_user_ids and user_id not in config.owner_user_ids:
         raise AuthError("user is not in the owner allowlist")
     if config.owner_emails and email not in config.owner_emails:

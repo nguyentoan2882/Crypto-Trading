@@ -235,22 +235,27 @@ class WebSecurityTests(unittest.TestCase):
         self.assertEqual(401, wsgi_call(self.app, path="/ready")[0])
         self.assertEqual(200, wsgi_call(self.app, path="/ready", headers={"X-NXT-Health-Token": "health-secret"})[0])
 
-    def test_business_routes_require_valid_mfa_owner(self):
+    def test_business_routes_require_password_authenticated_owner(self):
         self.assertEqual(401, wsgi_call(self.app, path="/api/state")[0])
         self.assertEqual(200, wsgi_call(self.app, path="/api/state", token="ok")[0])
-        weak = CloudWebApp(cloud_config(), self.repo, FakeVerifier({"sub": "owner-1", "email": "owner@example.com", "aal": "aal1"}))
-        self.assertEqual(401, wsgi_call(weak, path="/api/state", token="ok")[0])
+        password_only = CloudWebApp(cloud_config(), self.repo, FakeVerifier({"sub": "owner-1", "email": "owner@example.com", "aal": "aal1"}))
+        self.assertEqual(200, wsgi_call(password_only, path="/api/state", token="ok")[0])
+        unauthenticated = CloudWebApp(cloud_config(), self.repo, FakeVerifier({"sub": "owner-1", "email": "owner@example.com", "aal": "aal0"}))
+        self.assertEqual(401, wsgi_call(unauthenticated, path="/api/state", token="ok")[0])
         outsider = CloudWebApp(cloud_config(), self.repo, FakeVerifier({"sub": "other", "email": "other@example.com", "aal": "aal2"}))
         self.assertEqual(401, wsgi_call(outsider, path="/api/state", token="ok")[0])
 
-    def test_browser_login_is_public_but_session_requires_aal2_owner(self):
+    def test_browser_login_is_public_and_session_accepts_password_aal1_owner(self):
         status, headers, body = wsgi_call(self.app, path="/login")
         self.assertEqual(200, status)
         self.assertIn("Mật khẩu Supabase Auth".encode("utf-8"), body)
+        self.assertNotIn(b"totp", body.lower())
+        self.assertNotIn(b"/factors/", body)
         self.assertIn("connect-src 'self' https://project.supabase.co", headers["Content-Security-Policy"])
 
+        password_only = CloudWebApp(cloud_config(), self.repo, FakeVerifier({"sub": "owner-1", "email": "owner@example.com", "aal": "aal1"}))
         status, headers, body = wsgi_call(
-            self.app,
+            password_only,
             method="POST",
             path="/auth/session",
             token="ok",
@@ -259,13 +264,7 @@ class WebSecurityTests(unittest.TestCase):
         )
         self.assertEqual(200, status)
         self.assertIn("__Host-nxt_session=ok", headers["Set-Cookie"])
-        self.assertEqual("aal2", json.loads(body)["aal"])
-
-        weak = CloudWebApp(cloud_config(), self.repo, FakeVerifier({"sub": "owner-1", "email": "owner@example.com", "aal": "aal1"}))
-        self.assertEqual(
-            401,
-            wsgi_call(weak, method="POST", path="/auth/session", token="ok", body={}, headers={"Origin": "https://nxt.example"})[0],
-        )
+        self.assertEqual("aal1", json.loads(body)["aal"])
 
     def test_cookie_write_requires_origin_csrf_and_idempotency(self):
         cookie = "__Host-nxt_session=ok; nxt_csrf=abc"
