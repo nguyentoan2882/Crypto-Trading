@@ -219,6 +219,13 @@ class ConfigSafetyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CloudConfig.from_env({"ROLE": "scanner", "NXT_NOTIFICATION_MODE": "auto"})
 
+    def test_force_run_is_scanner_only_and_uses_a_safe_short_token(self):
+        self.assertEqual("manual-20260922", CloudConfig.from_env({"ROLE": "scanner", "NXT_FORCE_RUN_ID": "manual-20260922"}).force_run_id)
+        with self.assertRaises(ValueError):
+            CloudConfig.from_env({"ROLE": "web", "NXT_FORCE_RUN_ID": "manual-20260922"})
+        with self.assertRaises(ValueError):
+            CloudConfig.from_env({"ROLE": "scanner", "NXT_FORCE_RUN_ID": "unsafe token"})
+
 
 class WebSecurityTests(unittest.TestCase):
     def setUp(self):
@@ -507,6 +514,36 @@ class ScannerControlTests(unittest.TestCase):
         self.assertTrue(self.outbox.items[0][0].startswith("cloud-shadow:"))
         self.assertIn("NXT v3.5 Portfolio", self.outbox.items[0][1])
         self.assertIn("<b>ACTION CAN LUU Y:", self.outbox.items[0][1])
+
+    def test_force_run_bypasses_completed_gate_and_namespaces_delivery(self):
+        self.repo.completed = True
+        signal = {
+            "id": "signal-force-1",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "signalType": "Primary",
+            "signalDate": "2026-09-20",
+            "entryDate": "2026-09-21",
+            "entryPrice": 100.0,
+            "initialStop": 90.0,
+            "tp1": 120.0,
+            "atr14": 8.0,
+            "rsi14": 55.0,
+            "distanceToEma50Atr": 0.5,
+            "orders": [],
+        }
+        config = cloud_config(role="scanner", force_run_id="manual-20260922")
+        scanner = CloudScanner(config, FakeMarket(self.rows), self.repo, self.outbox, now_fn=lambda: self.now)
+        with (
+            mock.patch("app.nxt_cloud.scanner.rules.btc_regime_by_date", return_value={}),
+            mock.patch("app.nxt_cloud.scanner.rules.latest_signal_for_symbol", side_effect=[signal, None, None]),
+        ):
+            result = scanner.run_once()
+        self.assertEqual("COMPLETED", result["status"])
+        self.assertEqual("manual-20260922", result["forceRunId"])
+        self.assertEqual(1, len(self.repo.bundles))
+        self.assertIn(":force:manual-20260922", self.outbox.items[0][0])
+        self.assertEqual("manual-20260922", self.outbox.items[0][2]["forceRunId"])
 
 
 class OutboxSafetyTests(unittest.TestCase):

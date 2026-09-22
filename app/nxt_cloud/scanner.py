@@ -70,10 +70,11 @@ class CloudScanner:
         candle_sets = {symbol: self.market.daily_candles(symbol) for symbol in self.config.symbols}
         candle_date, manifests = validate_candle_sets(candle_sets, self.config.symbols, expected_date)
         lock_key = f"nxt:{self.config.environment}:{candle_date}:{self.config.rule_version}"
+        force_suffix = f":force:{self.config.force_run_id}" if self.config.force_run_id else ""
         with self.repository.scan_lock(lock_key) as acquired:
             if not acquired:
                 return {"status": "SKIPPED_LOCKED", "candleDate": candle_date}
-            if self.repository.completed_scan_exists(self.config.environment, candle_date, self.config.rule_version):
+            if not self.config.force_run_id and self.repository.completed_scan_exists(self.config.environment, candle_date, self.config.rule_version):
                 return {"status": "SKIPPED_COMPLETED", "candleDate": candle_date}
             detected_at = started.replace(microsecond=0).isoformat().replace("+00:00", "Z")
             regime = rules.btc_regime_by_date(candle_sets["BTCUSDT"])
@@ -119,18 +120,18 @@ class CloudScanner:
             if signals:
                 ids = sorted(str(item["id"]) for item in signals)
                 self.outbox.enqueue(
-                    f"cloud-shadow:signals:{candle_date}:{_canonical_hash(ids)[:16]}",
+                    f"cloud-shadow:signals:{candle_date}:{_canonical_hash(ids)[:16]}{force_suffix}",
                     build_entry_message(signals, generated_at),
-                    {"runId": run_id, "signalIds": ids},
+                    {"runId": run_id, "signalIds": ids, "forceRunId": self.config.force_run_id or None},
                 )
             actionable = [item for item in followups if item["action"] != "NO_ACTION"]
             if actionable:
                 for message, batch_ids in build_followup_message_batches(actionable, generated_at=generated_at):
                     ids = sorted(batch_ids)
                     self.outbox.enqueue(
-                        f"cloud-shadow:followups:{candle_date}:{_canonical_hash(ids)[:16]}",
+                        f"cloud-shadow:followups:{candle_date}:{_canonical_hash(ids)[:16]}{force_suffix}",
                         message,
-                        {"runId": run_id, "recommendationIds": ids},
+                        {"runId": run_id, "recommendationIds": ids, "forceRunId": self.config.force_run_id or None},
                     )
             delivered = self.outbox.flush()
-            return {"status": "COMPLETED", "runId": run_id, "candleDate": candle_date, "newSignals": len(signals), "followUps": len(followups), "delivered": delivered, "inputHash": input_hash}
+            return {"status": "COMPLETED", "runId": run_id, "candleDate": candle_date, "newSignals": len(signals), "followUps": len(followups), "delivered": delivered, "inputHash": input_hash, "forceRunId": self.config.force_run_id or None}

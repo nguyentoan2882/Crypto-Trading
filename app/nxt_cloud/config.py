@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -34,6 +35,7 @@ class CloudConfig:
     symbols: tuple[str, ...] = ("BTCUSDT", "BNBUSDT", "SOLUSDT")
     rule_version: str = "NXT-v3.5-GuardDirectional-30-10At4R-60"
     git_sha: str = "unknown"
+    force_run_id: str = ""
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "CloudConfig":
@@ -59,6 +61,7 @@ class CloudConfig:
             symbols=_csv(env.get("NXT_SYMBOLS", "BTCUSDT,BNBUSDT,SOLUSDT")),
             rule_version=env.get("NXT_RULE_VERSION", cls.rule_version).strip(),
             git_sha=env.get("NXT_GIT_SHA", "unknown").strip(),
+            force_run_id=env.get("NXT_FORCE_RUN_ID", "").strip(),
         )
         config.validate(env)
         return config
@@ -76,6 +79,11 @@ class CloudConfig:
             raise ValueError("Shadow symbols must be exactly BTCUSDT, BNBUSDT and SOLUSDT")
         if self.notification_mode not in {"disabled", "telegram"}:
             raise ValueError("NXT_NOTIFICATION_MODE must be disabled or telegram")
+        if self.force_run_id:
+            if self.role != "scanner":
+                raise ValueError("NXT_FORCE_RUN_ID is allowed only for the scanner role")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", self.force_run_id):
+                raise ValueError("NXT_FORCE_RUN_ID must be a safe token of at most 64 characters")
         env = os.environ if environ is None else environ
         forbidden = [name for name, value in env.items() if value and name.startswith("BINANCE_") and any(marker in name for marker in FORBIDDEN_BINANCE_ENV_MARKERS)]
         if forbidden:
