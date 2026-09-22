@@ -12,6 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app import nxt_signal_app as core
+from app.nxt_core.telegram_messages import (
+    build_entry_message,
+    build_followup_message as build_shared_followup_message,
+    build_followup_message_batches as build_shared_followup_message_batches,
+    format_price,
+)
 
 
 OUTBOX_PATH = ROOT / "runtime" / "nxt_signal_app" / "telegram_outbox.json"
@@ -38,92 +44,16 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def format_price(value: float) -> str:
-    if abs(value) >= 1000:
-        return f"{value:,.2f}"
-    if abs(value) >= 1:
-        return f"{value:.4f}"
-    return f"{value:.6f}"
-
-
 def build_message(alerts: list[dict]) -> str:
-    generated_at = datetime.now()
-    lines = [
-        f"{core.SYSTEM_NAME}: entry signal",
-        f"Generated: {generated_at.strftime('%Y-%m-%d %H:%M:%S')}",
-        "",
-    ]
-    if generated_at.hour >= 8 and any(signal.get("entryDate") == generated_at.date().isoformat() for signal in alerts):
-        lines.extend(
-            [
-                "WARNING: delayed recovery scan; the planned daily-open entry has already passed.",
-                "Reassess current price and risk manually. Do not treat the historical open as an executable quote.",
-                "",
-            ]
-        )
-    for signal in alerts:
-        lines.extend(
-            [
-                f"{html.escape(str(signal['symbol']))} {html.escape(str(signal['side']))} ({html.escape(str(signal['signalType']))})",
-                f"Signal date: {signal['signalDate']}",
-                f"Entry date/open: {signal['entryDate']} @ {format_price(signal['entryPrice'])}",
-                f"Stop: {format_price(signal['initialStop'])}",
-                f"TP1: {format_price(signal['tp1'])}",
-                f"ATR14: {format_price(signal['atr14'])} | RSI14: {signal['rsi14']:.2f} | EMA50 distance: {signal['distanceToEma50Atr']:.2f} ATR",
-                "<b>ACTION CAN LUU Y: REVIEW TIN HIEU VA QUYET DINH ACCEPT / REJECT / WATCHLIST</b>",
-                "Recommendation Only - he thong khong dat lenh.",
-                "Suggested orders:",
-            ]
-        )
-        for order in signal.get("orders", []):
-            price = order.get("price") or order.get("triggerPrice")
-            price_text = f" @ {format_price(price)}" if price else ""
-            qty_text = f" qty {format_price(order['quantityBase'])}" if order.get("quantityBase") else ""
-            lines.append(f"- {order['step']}. {order['action']}: {order['orderSide']} {order['orderType']}{qty_text}{price_text}")
-        lines.append("")
-    return "\n".join(lines).strip()
+    return build_entry_message(alerts)
 
 
 def build_followup_message(items: list[dict]) -> str:
-    lines = [
-        f"{html.escape(core.SYSTEM_NAME)}: Accepted signal daily follow-up",
-        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "",
-    ]
-    for item in sorted(items, key=lambda row: (int(row.get("priority", 99)), row.get("symbol", ""))):
-        lines.extend(
-            [
-                f"{html.escape(str(item['symbol']))} {html.escape(str(item['side']))} ({html.escape(str(item.get('signalType', '')))})",
-                f"Status: {html.escape(str(item['trackingStatus']))}",
-                f"Latest closed candle: {html.escape(str(item['candleDate']))}",
-                f"<b>ACTION: {html.escape(str(item['actionLabel']))}</b>",
-                f"Reason: {html.escape(str(item['rationale']))}",
-            ]
-        )
-        if item.get("theoretical"):
-            lines.append("WARNING: danh gia theoretical theo accepted Trade Plan; chua xac nhan user da vao lenh.")
-            lines.append("Neu da giao dich ben ngoai, hay Track Position va xac nhan actual entry/quantity/SL.")
-        else:
-            lines.append("Vui long thao tac ben ngoai he thong va xac nhan outcome trong NXT neu co action.")
-        lines.append("")
-    return "\n".join(lines).strip()
+    return build_shared_followup_message(items)
 
 
 def build_followup_message_batches(items: list[dict], max_length: int = 3900) -> list[tuple[str, list[str]]]:
-    ordered = sorted(items, key=lambda row: (int(row.get("priority", 99)), row.get("symbol", ""), row.get("signalId", "")))
-    batches: list[tuple[str, list[str]]] = []
-    current: list[dict] = []
-    for item in ordered:
-        candidate = current + [item]
-        message = build_followup_message(candidate)
-        if current and len(message) > max_length:
-            batches.append((build_followup_message(current), [str(row["recommendationId"]) for row in current]))
-            current = [item]
-        else:
-            current = candidate
-    if current:
-        batches.append((build_followup_message(current), [str(row["recommendationId"]) for row in current]))
-    return batches
+    return build_shared_followup_message_batches(items, max_length)
 
 
 def build_error_message(result: dict) -> str:

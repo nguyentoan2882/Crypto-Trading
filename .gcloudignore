@@ -7,3 +7,11 @@
 !app/**
 !scripts/
 !scripts/**
+!tests/
+!tests/**
+!cloud/
+!cloud/**
+!data_cache/
+data_cache/*
+!data_cache/binance_usdm_futures_1d_live/
+!data_cache/binance_usdm_futures_1d_live/**

@@ -23,12 +23,12 @@ import backtest_nxt32_native_1d_latest as native
 from nxt_usdm_binance_1d_data import fetch_usdm_1d
 from app import nxt_mvp_store as store
 from app.nxt_core import rules as rule_engine
+from app.nxt_core.telegram_messages import SYSTEM_NAME
 
 
 APP_DIR = ROOT / "outputs" / "nxt_signal_app"
 HISTORY_PATH = APP_DIR / "signals_history.json"
 SCAN_PATH = APP_DIR / "last_scan.json"
-SYSTEM_NAME = "NXT v3.5 Portfolio BTC+BNB+SOL + Guard directional 30/10@4R/60 + Binance USD-M 1D + SSL14 + Early-BE 7%"
 SYMBOLS = ["BTCUSDT", "BNBUSDT", "SOLUSDT"]
 WARMUP_DATE = native.WARMUP_DATE
 ONE_R_DOLLARS = float(os.environ.get("NXT_ONE_R_DOLLARS", "1000"))

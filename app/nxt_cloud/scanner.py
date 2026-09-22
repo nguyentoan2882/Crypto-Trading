@@ -5,10 +5,15 @@ import json
 import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app.nxt_cloud.config import CloudConfig
 from app.nxt_cloud.contracts import CloudRepository, MarketData, NotificationOutbox
 from app.nxt_core import rules
+from app.nxt_core.telegram_messages import build_entry_message, build_followup_message_batches
+
+
+ICT = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 class DataGateError(RuntimeError):
@@ -110,12 +115,22 @@ class CloudScanner:
             }
             self.repository.persist_scan_bundle(bundle)
             self.repository.persist_followup_recommendations(self.config.environment, followups)
+            generated_at = started.astimezone(ICT)
             if signals:
                 ids = sorted(str(item["id"]) for item in signals)
-                self.outbox.enqueue(f"cloud-shadow:signals:{candle_date}:{_canonical_hash(ids)[:16]}", f"New shadow signals: {', '.join(ids)}", {"runId": run_id, "signalIds": ids})
+                self.outbox.enqueue(
+                    f"cloud-shadow:signals:{candle_date}:{_canonical_hash(ids)[:16]}",
+                    build_entry_message(signals, generated_at),
+                    {"runId": run_id, "signalIds": ids},
+                )
             actionable = [item for item in followups if item["action"] != "NO_ACTION"]
             if actionable:
-                ids = sorted(str(item["recommendationId"]) for item in actionable)
-                self.outbox.enqueue(f"cloud-shadow:followups:{candle_date}:{_canonical_hash(ids)[:16]}", f"Shadow follow-up actions: {', '.join(ids)}", {"runId": run_id, "recommendationIds": ids})
+                for message, batch_ids in build_followup_message_batches(actionable, generated_at=generated_at):
+                    ids = sorted(batch_ids)
+                    self.outbox.enqueue(
+                        f"cloud-shadow:followups:{candle_date}:{_canonical_hash(ids)[:16]}",
+                        message,
+                        {"runId": run_id, "recommendationIds": ids},
+                    )
             delivered = self.outbox.flush()
             return {"status": "COMPLETED", "runId": run_id, "candleDate": candle_date, "newSignals": len(signals), "followUps": len(followups), "delivered": delivered, "inputHash": input_hash}

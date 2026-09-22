@@ -28,7 +28,14 @@ class TelegramSender:
         self.timeout = timeout
 
     def __call__(self, message: str) -> None:
-        data = urllib.parse.urlencode({"chat_id": self.chat_id, "text": message, "disable_web_page_preview": "true"}).encode("utf-8")
+        data = urllib.parse.urlencode(
+            {
+                "chat_id": self.chat_id,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": "true",
+            }
+        ).encode("utf-8")
         request = urllib.request.Request(self.url, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))

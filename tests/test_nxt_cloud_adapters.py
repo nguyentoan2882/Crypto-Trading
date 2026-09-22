@@ -4,6 +4,7 @@ import io
 import json
 import threading
 import unittest
+import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -12,7 +13,7 @@ from unittest import mock
 from wsgiref.simple_server import make_server
 
 from app.nxt_cloud.config import CloudConfig
-from app.nxt_cloud.outbox import DisabledNotificationOutbox, PostgresOutbox, SHADOW_DISCLAIMER, SHADOW_PREFIX
+from app.nxt_cloud.outbox import DisabledNotificationOutbox, PostgresOutbox, SHADOW_DISCLAIMER, SHADOW_PREFIX, TelegramSender
 from app.nxt_cloud.postgres import PostgresRepository
 from app.nxt_cloud.quantity import render_quantity_calculator
 from app.nxt_cloud.scanner import CloudScanner, DataGateError, validate_candle_sets
@@ -392,7 +393,21 @@ class ScannerControlTests(unittest.TestCase):
         self.assertEqual([], self.repo.bundles)
 
     def test_success_is_finite_persist_first_then_notify(self):
-        signal = {"id": "signal-1", "symbol": "BTCUSDT", "side": "LONG", "signalType": "Primary", "signalDate": "2026-09-20"}
+        signal = {
+            "id": "signal-1",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "signalType": "Primary",
+            "signalDate": "2026-09-20",
+            "entryDate": "2026-09-21",
+            "entryPrice": 100.0,
+            "initialStop": 90.0,
+            "tp1": 120.0,
+            "atr14": 8.0,
+            "rsi14": 55.0,
+            "distanceToEma50Atr": 0.5,
+            "orders": [],
+        }
         scanner = CloudScanner(self.config, FakeMarket(self.rows), self.repo, self.outbox, now_fn=lambda: self.now)
         with (
             mock.patch("app.nxt_cloud.scanner.rules.btc_regime_by_date", return_value={}),
@@ -403,6 +418,8 @@ class ScannerControlTests(unittest.TestCase):
         self.assertEqual(1, result["newSignals"])
         self.assertEqual(1, len(self.repo.bundles))
         self.assertTrue(self.outbox.items[0][0].startswith("cloud-shadow:"))
+        self.assertIn("NXT v3.5 Portfolio", self.outbox.items[0][1])
+        self.assertIn("<b>ACTION CAN LUU Y:", self.outbox.items[0][1])
 
 
 class OutboxSafetyTests(unittest.TestCase):
@@ -434,6 +451,16 @@ class OutboxSafetyTests(unittest.TestCase):
     def test_local_namespace_is_rejected(self):
         with self.assertRaises(ValueError):
             PostgresOutbox(FakeRepository(), lambda _: None).enqueue("signal:local-key", "hello", {})
+
+    def test_cloud_sender_uses_same_html_parse_mode_as_local(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"ok":true}'
+        with mock.patch("app.nxt_cloud.outbox.urllib.request.urlopen", return_value=response) as urlopen:
+            TelegramSender("token", "chat")("<b>ACTION</b>")
+        request = urlopen.call_args.args[0]
+        payload = urllib.parse.parse_qs(request.data.decode("utf-8"))
+        self.assertEqual(["HTML"], payload["parse_mode"])
+        self.assertEqual(["<b>ACTION</b>"], payload["text"])
 
 
 class PostgresAdapterContractTests(unittest.TestCase):
