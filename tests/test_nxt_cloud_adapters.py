@@ -16,6 +16,7 @@ from app.nxt_cloud.outbox import DisabledNotificationOutbox, PostgresOutbox, SHA
 from app.nxt_cloud.postgres import PostgresRepository
 from app.nxt_cloud.quantity import render_quantity_calculator
 from app.nxt_cloud.scanner import CloudScanner, DataGateError, validate_candle_sets
+from scripts.nxt_cloud_telegram_test import build_test_message
 from app.nxt_cloud.web import CloudWebApp
 
 
@@ -405,6 +406,12 @@ class ScannerControlTests(unittest.TestCase):
 
 
 class OutboxSafetyTests(unittest.TestCase):
+    def test_cloud_telegram_connectivity_message_is_unambiguously_shadow(self):
+        message = build_test_message()
+        self.assertTrue(message.startswith(SHADOW_PREFIX))
+        self.assertIn(SHADOW_DISCLAIMER, message)
+        self.assertIn("no signal, no order, no schedule", message)
+
     def test_disabled_mode_never_persists_or_delivers_notifications(self):
         outbox = DisabledNotificationOutbox()
         self.assertFalse(outbox.enqueue("cloud-shadow:test:disabled", "hello", {}))
