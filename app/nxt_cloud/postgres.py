@@ -12,6 +12,8 @@ LIST_QUERIES = {
     "signals": "SELECT signal_id, symbol, side, signal_type, signal_date, payload, created_at FROM signals WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY signal_date DESC, created_at DESC LIMIT %s OFFSET %s",
     "scans": "SELECT run_id, candle_date, status, source, input_hash, rule_version, started_at, finished_at, errors_json FROM scan_runs WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY started_at DESC LIMIT %s OFFSET %s",
     "followups": "SELECT recommendation_id, signal_id, position_id, candle_date, action, priority, status, payload, created_at FROM followup_recommendations WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY candle_date DESC, priority, created_at DESC LIMIT %s OFFSET %s",
+    "decisions": "SELECT DISTINCT ON (signal_id) decision_id, signal_id, decision, note, created_at FROM decisions WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY signal_id, created_at DESC, decision_id DESC LIMIT %s OFFSET %s",
+    "positions": "SELECT position_id, signal_id, entry_price, quantity, lifecycle, payload, created_at, updated_at FROM manual_positions WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY updated_at DESC LIMIT %s OFFSET %s",
 }
 
 
@@ -82,6 +84,8 @@ class PostgresRepository:
             "signals": list(self.list_records("signals", owner_user_id, 50, 0)),
             "scanRuns": list(self.list_records("scans", owner_user_id, 20, 0)),
             "followupRecommendations": list(self.list_records("followups", owner_user_id, 100, 0)),
+            "decisions": list(self.list_records("decisions", owner_user_id, 100, 0)),
+            "positions": list(self.list_records("positions", owner_user_id, 100, 0)),
         }
 
     def list_records(self, kind: str, owner_user_id: str, limit: int, offset: int) -> Sequence[Mapping[str, object]]:

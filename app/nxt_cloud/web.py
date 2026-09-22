@@ -69,21 +69,72 @@ def _pagination(environ: dict) -> tuple[int, int]:
 
 
 def _dashboard_html(state: dict, environment: str) -> str:
+    decisions = {
+        str(item.get("signal_id", "")): str(item.get("decision", ""))
+        for item in state.get("decisions", [])
+        if item.get("signal_id")
+    }
+    pending_signal_actions = []
     rows = []
     for item in list(state.get("signals", []))[:50]:
         payload = item.get("payload", item)
         signal_id = str(item.get("signal_id") or payload.get("id") or "")
         entry = float(payload.get("entryPrice", 0))
         stop = float(payload.get("initialStop", 0))
+        decision = decisions.get(signal_id, "Pending")
+        if decision == "Pending":
+            escaped_id = html.escape(signal_id, quote=True)
+            pending_signal_actions.append(
+                '<article class="action-card">'
+                '<div><span class="eyebrow">NEW SIGNAL</span>'
+                f"<h3>{html.escape(str(payload.get('symbol', '')))} · {html.escape(str(payload.get('side', '')))}</h3>"
+                f"<p>{html.escape(str(payload.get('signalType', '')))} · Signal {html.escape(str(payload.get('signalDate', '')))}</p></div>"
+                '<div class="action-buttons">'
+                f'<button class="decision primary" data-signal-id="{escaped_id}" data-decision="Accept">Accept</button>'
+                f'<button class="decision" data-signal-id="{escaped_id}" data-decision="Watchlist">Watchlist</button>'
+                f'<button class="decision danger" data-signal-id="{escaped_id}" data-decision="Reject">Reject</button>'
+                "</div></article>"
+            )
         rows.append(
             "<tr>"
             f"<td>{html.escape(str(payload.get('symbol', '')))}</td>"
             f"<td>{html.escape(str(payload.get('side', '')))}</td>"
             f"<td>{entry}</td><td>{stop}</td>"
+            f'<td><span class="status-chip {"pending" if decision == "Pending" else ""}">{html.escape(decision)}</span></td>'
             f"<td>{signal_button(signal_id, entry, stop)}</td>"
             "</tr>"
         )
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>NXT Cloud Shadow</title><style>body{{font-family:Arial,sans-serif;max-width:1100px;margin:30px auto;padding:0 20px;color:#17212b}}.banner{{background:#fff3cd;border:1px solid #e5bd57;padding:12px}}table{{width:100%;border-collapse:collapse;margin-top:20px}}td,th{{padding:9px;border-bottom:1px solid #ddd;text-align:left}}dialog{{max-width:620px;border:0;border-radius:8px;padding:20px}}label{{display:block;margin:10px 0}}input{{display:block;width:100%;padding:8px}}button{{padding:8px 12px}}</style></head><body><div class="banner"><b>[NXT-CLOUD][{html.escape(environment)}]</b> Testing only — local NXT remains official. Recommendation-only; no order execution.</div><h1>NXT Cloud Shadow</h1><table><thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Stop</th><th>Quantity</th></tr></thead><tbody>{''.join(rows)}</tbody></table>{render_quantity_calculator()}</body></html>"""
+
+    pending_followups = []
+    for item in state.get("followupRecommendations", []):
+        payload = item.get("payload", item)
+        status = str(item.get("status") or payload.get("status") or "Pending")
+        action = str(item.get("action") or payload.get("action") or "")
+        if status.lower() != "pending" or action == "NO_ACTION":
+            continue
+        recommendation_id = str(item.get("recommendation_id") or payload.get("recommendationId") or "")
+        escaped_id = html.escape(recommendation_id, quote=True)
+        pending_followups.append(
+            '<article class="action-card followup">'
+            '<div><span class="eyebrow">FOLLOW-UP</span>'
+            f"<h3>{html.escape(str(payload.get('symbol', '')))} · {html.escape(str(payload.get('side', '')))}</h3>"
+            f"<p><b>{html.escape(str(payload.get('actionLabel') or action))}</b></p>"
+            f"<p>{html.escape(str(payload.get('rationale', '')))}</p></div>"
+            '<div class="action-buttons">'
+            f'<button class="followup-outcome primary" data-recommendation-id="{escaped_id}" data-outcome="Applied">Applied</button>'
+            f'<button class="followup-outcome" data-recommendation-id="{escaped_id}" data-outcome="Dismissed">Dismissed</button>'
+            f'<button class="followup-outcome" data-recommendation-id="{escaped_id}" data-outcome="NotApplicable">Not applicable</button>'
+            "</div></article>"
+        )
+
+    actions = pending_signal_actions + pending_followups
+    action_content = "".join(actions) if actions else '<div class="empty">Không có action đang chờ.</div>'
+    action_count = len(actions)
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>NXT Cloud Shadow</title><style>
+body{{font-family:Arial,sans-serif;max-width:1180px;margin:30px auto;padding:0 20px;color:#17212b;background:#f7f9fb}}.banner{{background:#fff3cd;border:1px solid #e5bd57;padding:14px}}h1{{margin:28px 0 8px}}h2{{margin:0}}.sub{{color:#637083;margin-top:6px}}.panel{{background:#fff;border:1px solid #dce2e8;border-radius:12px;padding:20px;margin-top:22px}}.panel-heading{{display:flex;justify-content:space-between;gap:16px;align-items:center}}.status-chip{{display:inline-block;padding:5px 9px;border-radius:999px;background:#e8f3f1;color:#176b62;font-size:13px;font-weight:700}}.status-chip.pending{{background:#fff0cc;color:#8b5a00}}.actions{{display:grid;gap:12px;margin-top:16px}}.action-card{{display:flex;justify-content:space-between;gap:20px;align-items:center;border:1px solid #dce2e8;border-left:5px solid #e5a927;border-radius:9px;padding:15px}}.action-card.followup{{border-left-color:#287e73}}.action-card h3,.action-card p{{margin:4px 0}}.eyebrow{{font-size:12px;font-weight:800;letter-spacing:.08em;color:#637083}}.action-buttons{{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}}button{{padding:9px 13px;border:1px solid #aeb9c2;border-radius:6px;background:#fff;cursor:pointer}}button.primary{{background:#287e73;color:#fff;border-color:#287e73}}button.danger{{color:#a42b2b;border-color:#d7a6a6}}button:disabled{{opacity:.55;cursor:wait}}table{{width:100%;border-collapse:collapse;margin-top:16px}}td,th{{padding:11px 9px;border-bottom:1px solid #ddd;text-align:left}}dialog{{max-width:620px;border:0;border-radius:8px;padding:20px}}label{{display:block;margin:10px 0}}input{{display:block;width:100%;padding:8px}}.empty{{padding:24px;text-align:center;color:#637083;background:#f7f9fb;border-radius:8px}}#action-status{{min-height:20px;margin-top:12px;color:#176b62}}@media(max-width:760px){{.action-card{{align-items:flex-start;flex-direction:column}}.action-buttons{{justify-content:flex-start}}.table-wrap{{overflow:auto}}}}
+</style></head><body><div class="banner"><b>[NXT-CLOUD][{html.escape(environment)}]</b> Testing only — local NXT remains official. Recommendation-only; no order execution.</div><h1>NXT Cloud Shadow</h1><p class="sub">Trading decision desk · dữ liệu Supabase SHADOW</p><section class="panel" id="action-center"><div class="panel-heading"><div><h2>Action Center</h2><p class="sub">Xử lý tín hiệu mới và follow-up đang chờ xác nhận.</p></div><span class="status-chip pending">{action_count} pending</span></div><div class="actions">{action_content}</div><div id="action-status"></div></section><section class="panel"><div class="panel-heading"><div><h2>Tín hiệu</h2><p class="sub">Lịch sử tín hiệu và quyết định mới nhất.</p></div><span class="status-chip">{len(rows)} signals</span></div><div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Stop</th><th>Decision</th><th>Quantity</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div></section>{render_quantity_calculator()}<script>
+(()=>{{const status=document.getElementById('action-status'),cookie=name=>document.cookie.split('; ').find(row=>row.startsWith(name+'='))?.split('=').slice(1).join('=')||'',post=async(path,body)=>{{status.textContent='Đang ghi nhận...';const response=await fetch(path,{{method:'POST',headers:{{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(cookie('nxt_csrf')),'Idempotency-Key':crypto.randomUUID()}},body:JSON.stringify(body)}}),data=await response.json().catch(()=>({{}}));if(!response.ok)throw new Error(data.error||'HTTP '+response.status);return data}},run=async(button,task)=>{{document.querySelectorAll('button').forEach(item=>item.disabled=true);try{{await task();status.textContent='Đã ghi nhận. Đang tải lại...';location.reload()}}catch(error){{status.textContent='Không thể ghi nhận: '+error.message;document.querySelectorAll('button').forEach(item=>item.disabled=false)}}}};document.querySelectorAll('.decision').forEach(button=>button.addEventListener('click',()=>run(button,()=>post('/api/decisions',{{signalId:button.dataset.signalId,decision:button.dataset.decision,note:''}}))));document.querySelectorAll('.followup-outcome').forEach(button=>button.addEventListener('click',()=>run(button,()=>post('/api/followups/'+encodeURIComponent(button.dataset.recommendationId)+'/outcome',{{outcome:button.dataset.outcome}}))))}})();
+</script></body></html>"""
 
 
 def _login_html(config: CloudConfig) -> str:

@@ -290,6 +290,51 @@ class WebSecurityTests(unittest.TestCase):
         self.assertEqual("nosniff", headers["X-Content-Type-Options"])
         self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
 
+    def test_dashboard_renders_signal_and_followup_action_center(self):
+        self.repo.dashboard_state = lambda _owner: {
+            "environment": "SHADOW",
+            "signals": [
+                {
+                    "signal_id": "signal-1",
+                    "payload": {
+                        "id": "signal-1",
+                        "symbol": "BTCUSDT",
+                        "side": "LONG",
+                        "signalType": "Primary",
+                        "signalDate": "2026-09-21",
+                        "entryPrice": 100.0,
+                        "initialStop": 90.0,
+                    },
+                }
+            ],
+            "decisions": [],
+            "positions": [],
+            "scanRuns": [],
+            "followupRecommendations": [
+                {
+                    "recommendation_id": "rec-1",
+                    "action": "MOVE_STOP_TO_BE",
+                    "status": "Pending",
+                    "payload": {
+                        "symbol": "BTCUSDT",
+                        "side": "LONG",
+                        "actionLabel": "Move stop to BE",
+                        "rationale": "TP1 reached",
+                    },
+                }
+            ],
+        }
+        status, _, body = wsgi_call(self.app, path="/", token="ok")
+        self.assertEqual(200, status)
+        page = body.decode("utf-8")
+        self.assertIn("Action Center", page)
+        self.assertIn("2 pending", page)
+        self.assertIn('data-decision="Accept"', page)
+        self.assertIn('data-decision="Reject"', page)
+        self.assertIn('data-decision="Watchlist"', page)
+        self.assertIn('data-outcome="Applied"', page)
+        self.assertIn("Move stop to BE", page)
+
     def test_wsgi_app_serves_real_http_health_request(self):
         server = make_server("127.0.0.1", 0, self.app)
         thread = threading.Thread(target=server.handle_request, daemon=True)
