@@ -301,6 +301,7 @@ class WebSecurityTests(unittest.TestCase):
                         "side": "LONG",
                         "signalType": "Primary",
                         "signalDate": "2026-09-21",
+                        "detectedAt": "2026-09-21T01:02:03Z",
                         "entryPrice": 100.0,
                         "initialStop": 90.0,
                     },
@@ -314,6 +315,8 @@ class WebSecurityTests(unittest.TestCase):
                     "recommendation_id": "rec-1",
                     "action": "MOVE_STOP_TO_BE",
                     "status": "Pending",
+                    "candle_date": "2026-09-21",
+                    "created_at": "2026-09-21T03:04:05+00:00",
                     "payload": {
                         "symbol": "BTCUSDT",
                         "side": "LONG",
@@ -333,6 +336,8 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn('data-decision="Watchlist"', page)
         self.assertIn('data-outcome="Applied"', page)
         self.assertIn("Move stop to BE", page)
+        self.assertIn("Signal D1: 2026-09-21 · Phát hiện: 2026-09-21 08:02 ICT", page)
+        self.assertIn("Nến D1: 2026-09-21 · Tạo: 2026-09-21 10:04 ICT", page)
 
     def test_dashboard_action_center_matches_local_followup_filter(self):
         self.repo.dashboard_state = lambda _owner: {
