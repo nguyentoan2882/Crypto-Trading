@@ -110,7 +110,9 @@ def _dashboard_html(state: dict, environment: str) -> str:
         payload = item.get("payload", item)
         status = str(item.get("status") or payload.get("status") or "Pending")
         action = str(item.get("action") or payload.get("action") or "")
-        if status.lower() != "pending" or action == "NO_ACTION":
+        # Match the local dashboard: DATA_STALE and NO_ACTION remain available
+        # in history/audit, but they are not operator actions.
+        if status.lower() != "pending" or action in {"DATA_STALE", "NO_ACTION"}:
             continue
         recommendation_id = str(item.get("recommendation_id") or payload.get("recommendationId") or "")
         escaped_id = html.escape(recommendation_id, quote=True)
@@ -126,6 +128,8 @@ def _dashboard_html(state: dict, environment: str) -> str:
             f'<button class="followup-outcome" data-recommendation-id="{escaped_id}" data-outcome="NotApplicable">Not applicable</button>'
             "</div></article>"
         )
+        if len(pending_followups) >= 5:
+            break
 
     actions = pending_signal_actions + pending_followups
     action_content = "".join(actions) if actions else '<div class="empty">Không có action đang chờ.</div>'

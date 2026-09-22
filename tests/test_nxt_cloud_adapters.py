@@ -334,6 +334,42 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn('data-outcome="Applied"', page)
         self.assertIn("Move stop to BE", page)
 
+    def test_dashboard_action_center_matches_local_followup_filter(self):
+        self.repo.dashboard_state = lambda _owner: {
+            "environment": "SHADOW",
+            "signals": [],
+            "decisions": [],
+            "positions": [],
+            "scanRuns": [],
+            "followupRecommendations": [
+                {
+                    "recommendation_id": "stale-1",
+                    "action": "DATA_STALE",
+                    "status": "Pending",
+                    "payload": {"symbol": "BTCUSDT", "side": "LONG", "actionLabel": "KHONG THE DANH GIA - DATA STALE"},
+                },
+                {
+                    "recommendation_id": "none-1",
+                    "action": "NO_ACTION",
+                    "status": "Pending",
+                    "payload": {"symbol": "BNBUSDT", "side": "LONG", "actionLabel": "No action"},
+                },
+                {
+                    "recommendation_id": "action-1",
+                    "action": "MOVE_STOP_TO_BE",
+                    "status": "Pending",
+                    "payload": {"symbol": "SOLUSDT", "side": "SHORT", "actionLabel": "Move stop to BE", "rationale": "TP1 reached"},
+                },
+            ],
+        }
+        status, _, body = wsgi_call(self.app, path="/", token="ok")
+        self.assertEqual(200, status)
+        page = body.decode("utf-8")
+        self.assertNotIn("DATA STALE", page)
+        self.assertNotIn("No action", page)
+        self.assertIn("Move stop to BE", page)
+        self.assertIn("1 pending", page)
+
     def test_wsgi_app_serves_real_http_health_request(self):
         server = make_server("127.0.0.1", 0, self.app)
         thread = threading.Thread(target=server.handle_request, daemon=True)
