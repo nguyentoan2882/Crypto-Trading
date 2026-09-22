@@ -353,6 +353,8 @@ class QuantityPrivacyTests(unittest.TestCase):
         for forbidden in ("<form", "fetch(", "XMLHttpRequest", "localStorage", "sessionStorage", "name=", "leverage"):
             self.assertNotIn(forbidden, payload)
         self.assertIn("qty=riskUsd/riskUnit", payload)
+        self.assertIn('id="qty-notional"', payload)
+        self.assertIn("notional=qty*entry", payload)
         self.assertIn("qty*.3", payload)
         self.assertIn("qty*.1", payload)
         self.assertIn("qty*.6", payload)
