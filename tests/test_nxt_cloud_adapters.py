@@ -345,6 +345,11 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("Move stop to BE", page)
         self.assertIn("Signal D1: 2026-09-21 · Phát hiện: 2026-09-21 08:02 ICT", page)
         self.assertIn("Nến D1: 2026-09-21 · Tạo: 2026-09-21 10:04 ICT", page)
+        self.assertIn('content="width=device-width,initial-scale=1,viewport-fit=cover"', page)
+        self.assertIn("html,body{max-width:100%;overflow-x:hidden}", page)
+        self.assertIn("table,tbody,tr,td{display:block;width:100%}", page)
+        self.assertIn('data-label="Symbol"', page)
+        self.assertIn('data-label="Quantity"', page)
 
     def test_dashboard_action_center_matches_local_followup_filter(self):
         self.repo.dashboard_state = lambda _owner: {
