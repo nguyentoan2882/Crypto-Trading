@@ -7,11 +7,11 @@ from contextlib import contextmanager
 from typing import Any
 
 
-REQUIRED_SCHEMA_VERSION = 1
+REQUIRED_SCHEMA_VERSION = 2
 LIST_QUERIES = {
     "signals": "SELECT signal_id, symbol, side, signal_type, signal_date, payload, created_at FROM signals WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY signal_date DESC, created_at DESC LIMIT %s OFFSET %s",
     "scans": "SELECT run_id, candle_date, status, source, input_hash, rule_version, started_at, finished_at, errors_json FROM scan_runs WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY started_at DESC LIMIT %s OFFSET %s",
-    "followups": "SELECT recommendation_id, signal_id, position_id, candle_date, action, priority, status, payload, created_at FROM followup_recommendations WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY candle_date DESC, priority, created_at DESC LIMIT %s OFFSET %s",
+    "followups": "SELECT recommendation_id, signal_id, position_id, candle_date, action, priority, status, outcome, payload, created_at FROM followup_recommendations WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY candle_date DESC, priority, created_at DESC LIMIT %s OFFSET %s",
     "decisions": "SELECT DISTINCT ON (signal_id) decision_id, signal_id, decision, note, created_at FROM decisions WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY signal_id, created_at DESC, decision_id DESC LIMIT %s OFFSET %s",
     "positions": "SELECT position_id, signal_id, entry_price, quantity, lifecycle, payload, created_at, updated_at FROM manual_positions WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY updated_at DESC LIMIT %s OFFSET %s",
 }
@@ -161,7 +161,7 @@ class PostgresRepository:
     def record_followup_outcome(self, owner_user_id: str, recommendation_id: str, payload: Mapping[str, object], idempotency_key: str) -> Mapping[str, object]:
         operation = "followup-outcome"
         outcome = str(payload["outcome"])
-        if outcome not in {"Applied", "Dismissed", "NotApplicable"}:
+        if outcome not in {"Applied", "Not Applied", "Snoozed", "Already Closed"}:
             raise ValueError("invalid follow-up outcome")
         with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             self._lock_idempotency(cur, owner_user_id, idempotency_key, operation)
@@ -169,12 +169,12 @@ class PostgresRepository:
             if prior:
                 return prior
             cur.execute(
-                "UPDATE followup_recommendations SET status = %s, outcome_at = now() WHERE recommendation_id = %s AND owner_user_id = %s AND environment = 'SHADOW' RETURNING recommendation_id",
+                "UPDATE followup_recommendations SET status = 'Acknowledged', outcome = %s, outcome_at = now() WHERE recommendation_id = %s AND owner_user_id = %s AND environment = 'SHADOW' RETURNING recommendation_id",
                 (outcome, recommendation_id, owner_user_id),
             )
             if not cur.fetchone():
                 raise ValueError("follow-up recommendation not found")
-            response = {"recommendationId": recommendation_id, "status": outcome}
+            response = {"recommendationId": recommendation_id, "status": "Acknowledged", "outcome": outcome}
             self._save_idempotent(cur, owner_user_id, idempotency_key, operation, response)
             return response
 

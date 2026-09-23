@@ -47,8 +47,11 @@ class MigrationContractTests(unittest.TestCase):
 
     def test_migration_inventory_is_contiguous_and_checksummed(self):
         found = migration_files(ROOT / "cloud" / "migrations")
-        self.assertEqual([1], [version for version, _, _ in found])
+        self.assertEqual([1, 2], [version for version, _, _ in found])
         self.assertRegex(found[0][2], r"^[0-9a-f]{64}$")
+        outcome_sql = found[1][1].read_text(encoding="utf-8")
+        self.assertIn("ADD COLUMN outcome text", outcome_sql)
+        self.assertIn("legacy_import_records", outcome_sql)
 
 
 class CopyOnlyImporterTests(unittest.TestCase):
@@ -117,6 +120,17 @@ class CopyOnlyImporterTests(unittest.TestCase):
         self.assertEqual([], batches[4][1])
         self.assertEqual(3, len(batches[-1][1]))
         self.assertEqual({"d1", "d2", "p1"}, {item[2] for item in batches[-1][1]})
+
+    def test_followup_outcome_is_normalized_from_local_source(self):
+        rows = {
+            "signals": [{"signal_id": "s1", "symbol": "BTCUSDT", "side": "LONG", "signal_type": "Primary", "signal_date": "2026-09-18", "payload_json": "{}"}],
+            "followup_recommendations": [{
+                "recommendation_id": "r1", "signal_id": "s1", "candle_date": "2026-09-21", "action": "TAKE_TP1_30_MOVE_BE",
+                "priority": 1, "status": "Acknowledged", "outcome": "Applied", "payload_json": "{}",
+            }],
+        }
+        batches = build_batches(rows, "owner-1")
+        self.assertEqual("Applied", batches[5][1][0][8])
 
 
 if __name__ == "__main__":

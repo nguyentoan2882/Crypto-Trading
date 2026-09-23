@@ -148,13 +148,13 @@ def build_batches(rows: dict[str, list[dict[str, Any]]], owner: str) -> list[tup
         ) for row in rows.get("manual_positions", []) if float(row.get("entry_price") or 0) > 0 and float(row.get("quantity") or 0) > 0],
     ))
     batches.append((
-        "INSERT INTO followup_recommendations(recommendation_id,environment,owner_user_id,signal_id,position_id,candle_date,action,priority,status,payload,created_at,outcome_at) "
-        "VALUES (%s,'SHADOW',%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s) ON CONFLICT DO NOTHING",
+        "INSERT INTO followup_recommendations(recommendation_id,environment,owner_user_id,signal_id,position_id,candle_date,action,priority,status,outcome,payload,created_at,outcome_at) "
+        "VALUES (%s,'SHADOW',%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s) ON CONFLICT DO NOTHING",
         [(
             str(row["recommendation_id"]), owner, str(row["signal_id"]),
             str(row["position_id"]) if str(row.get("position_id")) in position_ids else None,
             _date_or_none(row.get("candle_date")), str(row.get("action") or "NO_ACTION"), int(row.get("priority") or 0),
-            str(row.get("status") or "Pending"), _json_text(_json_value(row.get("payload_json"), {})),
+            str(row.get("status") or "Pending"), row.get("outcome"), _json_text(_json_value(row.get("payload_json"), {})),
             row.get("created_at"), row.get("outcome_at"),
         ) for row in rows.get("followup_recommendations", []) if str(row.get("signal_id")) in signal_ids and _date_or_none(row.get("candle_date"))],
     ))

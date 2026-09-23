@@ -372,6 +372,19 @@ class WebSecurityTests(unittest.TestCase):
                     "status": "Pending",
                     "payload": {"symbol": "SOLUSDT", "side": "SHORT", "actionLabel": "Move stop to BE", "rationale": "TP1 reached"},
                 },
+                {
+                    "recommendation_id": "history-1",
+                    "action": "TAKE_TP1_30_MOVE_BE",
+                    "status": "Acknowledged",
+                    "outcome": "Applied",
+                    "payload": {"symbol": "BTCUSDT", "side": "LONG", "actionLabel": "Take TP1", "rationale": "Historical action"},
+                },
+                {
+                    "recommendation_id": "reminder-1",
+                    "action": "PENDING_CONFIRMATION",
+                    "status": "Reminder",
+                    "payload": {"symbol": "BNBUSDT", "side": "LONG", "actionLabel": "Pending confirmation", "rationale": "Confirm external trade"},
+                },
             ],
         }
         status, _, body = wsgi_call(self.app, path="/", token="ok")
@@ -380,7 +393,10 @@ class WebSecurityTests(unittest.TestCase):
         self.assertNotIn("DATA STALE", page)
         self.assertNotIn("No action", page)
         self.assertIn("Move stop to BE", page)
-        self.assertIn("1 pending", page)
+        self.assertIn("Take TP1", page)
+        self.assertIn("Applied", page)
+        self.assertIn("Pending confirmation", page)
+        self.assertIn("2 pending", page)
 
     def test_wsgi_app_serves_real_http_health_request(self):
         server = make_server("127.0.0.1", 0, self.app)
@@ -630,6 +646,16 @@ class PostgresAdapterContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             repository.track_position("owner-1", {"signalId": "s", "quantity": 0, "entryPrice": 10}, "idem")
         self.assertEqual([], cursor.executed)
+
+    def test_followup_outcome_uses_local_status_and_outcome_model(self):
+        cursor = FakeCursor([None, {"recommendation_id": "rec-1"}])
+        repository = PostgresRepository("", pool=FakePool(cursor))
+        result = repository.record_followup_outcome("owner-1", "rec-1", {"outcome": "Already Closed"}, "idem-1")
+        self.assertEqual({"recommendationId": "rec-1", "status": "Acknowledged", "outcome": "Already Closed"}, result)
+        update = next((query, params) for query, params in cursor.executed if "UPDATE followup_recommendations" in query)
+        self.assertIn("status = 'Acknowledged'", update[0])
+        self.assertIn("outcome = %s", update[0])
+        self.assertEqual(("Already Closed", "rec-1", "owner-1"), update[1])
 
 
 class BuildContractTests(unittest.TestCase):
