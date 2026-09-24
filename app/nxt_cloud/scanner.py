@@ -125,7 +125,9 @@ class CloudScanner:
                     build_entry_message(signals, generated_at),
                     {"runId": run_id, "signalIds": ids, "forceRunId": self.config.force_run_id or None},
                 )
-            actionable = [item for item in followups if item["action"] != "NO_ACTION"]
+            # Match the local operating view: informational/stale evaluations
+            # remain auditable but are never presented as operator actions.
+            actionable = [item for item in followups if item["action"] not in {"NO_ACTION", "DATA_STALE"}]
             if actionable:
                 for message, batch_ids in build_followup_message_batches(actionable, generated_at=generated_at):
                     ids = sorted(batch_ids)

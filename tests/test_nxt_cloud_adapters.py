@@ -536,6 +536,25 @@ class ScannerControlTests(unittest.TestCase):
         self.assertIn("NXT v3.5 Portfolio", self.outbox.items[0][1])
         self.assertIn("<b>ACTION CAN LUU Y:", self.outbox.items[0][1])
 
+    def test_stale_followup_is_persisted_for_audit_but_not_notified(self):
+        self.repo.accepted_monitor_subjects = lambda _environment: [{"signal_id": "signal-1", "symbol": "BTCUSDT"}]
+        stale = {
+            "recommendationId": "stale-1",
+            "signalId": "signal-1",
+            "symbol": "BTCUSDT",
+            "action": "DATA_STALE",
+        }
+        scanner = CloudScanner(self.config, FakeMarket(self.rows), self.repo, self.outbox, now_fn=lambda: self.now)
+        with (
+            mock.patch("app.nxt_cloud.scanner.rules.btc_regime_by_date", return_value={}),
+            mock.patch("app.nxt_cloud.scanner.rules.latest_signal_for_symbol", return_value=None),
+            mock.patch("app.nxt_cloud.scanner.rules.evaluate_accepted_signal_followup", return_value=stale),
+        ):
+            result = scanner.run_once()
+        self.assertEqual("COMPLETED", result["status"])
+        self.assertEqual([stale], self.repo.followups)
+        self.assertEqual([], self.outbox.items)
+
     def test_force_run_bypasses_completed_gate_and_namespaces_delivery(self):
         self.repo.completed = True
         signal = {
