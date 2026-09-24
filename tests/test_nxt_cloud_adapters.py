@@ -555,6 +555,35 @@ class ScannerControlTests(unittest.TestCase):
         self.assertEqual([stale], self.repo.followups)
         self.assertEqual([], self.outbox.items)
 
+    def test_no_action_followup_is_reported_to_telegram(self):
+        self.repo.accepted_monitor_subjects = lambda _environment: [{"signal_id": "signal-1", "symbol": "SOLUSDT"}]
+        no_action = {
+            "recommendationId": "no-action-1",
+            "signalId": "signal-1",
+            "symbol": "SOLUSDT",
+            "side": "LONG",
+            "signalType": "Continuation",
+            "trackingStatus": "Accepted - chua Track Position",
+            "candleDate": "2026-09-23",
+            "action": "NO_ACTION",
+            "actionLabel": "KHONG CAN THAO TAC",
+            "priority": 99,
+            "rationale": "Latest closed D1 candle khong kich hoat action moi.",
+            "theoretical": True,
+        }
+        scanner = CloudScanner(self.config, FakeMarket(self.rows), self.repo, self.outbox, now_fn=lambda: self.now)
+        with (
+            mock.patch("app.nxt_cloud.scanner.rules.btc_regime_by_date", return_value={}),
+            mock.patch("app.nxt_cloud.scanner.rules.latest_signal_for_symbol", return_value=None),
+            mock.patch("app.nxt_cloud.scanner.rules.evaluate_accepted_signal_followup", return_value=no_action),
+        ):
+            result = scanner.run_once()
+        self.assertEqual("COMPLETED", result["status"])
+        self.assertEqual([no_action], self.repo.followups)
+        self.assertEqual(1, len(self.outbox.items))
+        self.assertIn("<b>ACTION: KHONG CAN THAO TAC</b>", self.outbox.items[0][1])
+        self.assertIn("WARNING: danh gia theoretical", self.outbox.items[0][1])
+
     def test_force_run_bypasses_completed_gate_and_namespaces_delivery(self):
         self.repo.completed = True
         signal = {

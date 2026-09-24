@@ -125,11 +125,12 @@ class CloudScanner:
                     build_entry_message(signals, generated_at),
                     {"runId": run_id, "signalIds": ids, "forceRunId": self.config.force_run_id or None},
                 )
-            # Match the local operating view: informational/stale evaluations
-            # remain auditable but are never presented as operator actions.
-            actionable = [item for item in followups if item["action"] not in {"NO_ACTION", "DATA_STALE"}]
-            if actionable:
-                for message, batch_ids in build_followup_message_batches(actionable, generated_at=generated_at):
+            # Telegram is a daily status report, not the Action Center. Match
+            # local NXT by reporting NO_ACTION for monitored subjects while
+            # suppressing only evaluations that could not use fresh data.
+            reportable = [item for item in followups if item["action"] != "DATA_STALE"]
+            if reportable:
+                for message, batch_ids in build_followup_message_batches(reportable, generated_at=generated_at):
                     ids = sorted(batch_ids)
                     self.outbox.enqueue(
                         f"cloud-shadow:followups:{candle_date}:{_canonical_hash(ids)[:16]}{force_suffix}",

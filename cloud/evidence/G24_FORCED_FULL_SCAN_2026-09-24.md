@@ -30,7 +30,10 @@ duplicate Telegram delivery if the run produced a notification.
 - Force-run outbox rows: `0`.
 - Telegram messages delivered: `0`.
 
-The absence of a Telegram message is the expected business result after the G23
-parity correction: the run completed end-to-end, but no new signal or actionable
-follow-up existed. Authorization to duplicate a message does not synthesize a
-notification when the scanner has no actionable content.
+## Superseded interpretation
+
+The run facts above remain valid, but the original interpretation of
+`delivered=0` was rejected by the operator. A daily follow-up is a status report:
+an open/monitored subject with `NO_ACTION` must still be reported as `KHONG CAN
+THAO TAC`, matching local NXT. G25 corrects the cloud notification filter while
+continuing to suppress `DATA_STALE`.
