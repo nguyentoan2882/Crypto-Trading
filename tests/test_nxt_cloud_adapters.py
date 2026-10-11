@@ -18,7 +18,7 @@ from app.nxt_cloud.postgres import PostgresRepository
 from app.nxt_cloud.quantity import render_quantity_calculator
 from app.nxt_cloud.scanner import CloudScanner, DataGateError, validate_candle_sets
 from scripts.nxt_cloud_telegram_test import build_test_message
-from app.nxt_cloud.web import CloudWebApp
+from app.nxt_cloud.web import CloudWebApp, gunicorn_options
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -780,6 +780,9 @@ class PostgresAdapterContractTests(unittest.TestCase):
 
 
 class BuildContractTests(unittest.TestCase):
+    def test_gunicorn_disables_unused_control_socket_for_non_root_container(self):
+        self.assertTrue(gunicorn_options(cloud_config())["control_socket_disable"])
+
     def test_container_is_non_root_and_one_image_supports_two_roles(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         entrypoint = (ROOT / "app" / "nxt_cloud" / "entrypoint.py").read_text(encoding="utf-8")

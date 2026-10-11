@@ -308,6 +308,7 @@ def gunicorn_options(config: CloudConfig) -> dict[str, object]:
         "threads": int(os.environ.get("WEB_THREADS", "4")),
         "timeout": 30,
         "graceful_timeout": 20,
+        "control_socket_disable": True,
         "accesslog": "-",
         "errorlog": "-",
     }
