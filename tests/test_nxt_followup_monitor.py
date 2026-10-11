@@ -132,6 +132,29 @@ class FollowupRuleTests(unittest.TestCase):
         self.assertEqual(2, len(batches))
         self.assertTrue(all("<b>ACTION:" in message for message, _ in batches))
 
+    def test_accepted_signal_renders_manual_close_control(self) -> None:
+        row = {
+            "signal_id": signal()["id"],
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "signal_type": "Primary",
+            "signal_date": "2026-07-31",
+            "payload": signal(),
+            "plan": {"sizing": {"quantityBase": 5.0}},
+            "plan_status": "Ready",
+            "latest_decision": "Accept",
+            "manual_closed": 0,
+        }
+        rendered = core.render_dashboard_signals([row])
+        self.assertIn('action="/close-accepted"', rendered)
+        self.assertIn('name="close_price"', rendered)
+        self.assertIn("Đóng thủ công", rendered)
+
+        row["manual_closed"] = 1
+        rendered = core.render_dashboard_signals([row])
+        self.assertIn("Closed manually", rendered)
+        self.assertNotIn('action="/close-accepted"', rendered)
+
 
 class FollowupStoreTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -173,6 +196,68 @@ class FollowupStoreTests(unittest.TestCase):
         state = store.dashboard_state()
         self.assertEqual(0, len(state["positions"]))
         self.assertEqual(1, len(state["followupRecommendations"]))
+
+    def test_manual_close_stops_followup_and_is_idempotent(self) -> None:
+        sig = signal()
+        store.persist_scan_result(
+            {
+                "systemName": "test",
+                "scannedAt": "2026-08-01T00:01:00Z",
+                "symbols": ["BTCUSDT"],
+                "checked": [{"symbol": "BTCUSDT", "latestDate": "2026-07-31"}],
+                "newSignals": [sig],
+                "errors": [],
+            }
+        )
+        store.record_decision(sig["id"], "Accept")
+
+        first = store.close_accepted_signal(sig["id"], "Closed outside NXT", 108.5)
+        second = store.close_accepted_signal(sig["id"], "Ignored duplicate")
+
+        self.assertEqual(first["recommendation_id"], second["recommendation_id"])
+        self.assertEqual([], store.accepted_monitor_subjects())
+        state = store.dashboard_state()
+        self.assertEqual(1, state["signals"][0]["manual_closed"])
+        manual_closes = [item for item in state["followupRecommendations"] if item["action"] == "MANUAL_CLOSE"]
+        self.assertEqual(1, len(manual_closes))
+        self.assertEqual("Already Closed", manual_closes[0]["outcome"])
+        self.assertIn('"closePrice":108.5', manual_closes[0]["payload_json"])
+
+    def test_manual_close_closes_active_tracked_position(self) -> None:
+        sig = signal()
+        store.persist_scan_result(
+            {
+                "systemName": "test",
+                "scannedAt": "2026-08-01T00:01:00Z",
+                "symbols": ["BTCUSDT"],
+                "checked": [],
+                "newSignals": [sig],
+                "errors": [],
+            }
+        )
+        store.record_decision(sig["id"], "Accept")
+        store.track_position(sig["id"], 1.25)
+
+        store.close_accepted_signal(sig["id"])
+
+        state = store.dashboard_state()
+        self.assertEqual("Closed", state["positions"][0]["lifecycle"])
+        self.assertEqual([], store.accepted_monitor_subjects())
+
+    def test_manual_close_rejects_non_accepted_signal(self) -> None:
+        sig = signal()
+        store.persist_scan_result(
+            {
+                "systemName": "test",
+                "scannedAt": "2026-08-01T00:01:00Z",
+                "symbols": ["BTCUSDT"],
+                "checked": [],
+                "newSignals": [sig],
+                "errors": [],
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "Accept"):
+            store.close_accepted_signal(sig["id"])
 
 
 if __name__ == "__main__":

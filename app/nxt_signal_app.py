@@ -195,7 +195,7 @@ def render_signal_rows(signals: list[dict]) -> str:
     if not signals:
         return "<tr><td colspan='8' class='muted'>Chua co tin hieu trong SQLite.</td></tr>"
     rows = []
-    for row in signals:
+    for row in signals[:5]:
         signal = row["payload"]
         plan = row.get("plan", {})
         sizing = plan.get("sizing", {})
@@ -465,14 +465,44 @@ def render_dashboard_signals(signals: list[dict]) -> str:
     if not signals:
         return "<tr><td colspan='7' class='empty-cell'>Chưa có tín hiệu được lưu.</td></tr>"
     rows = []
-    for row in signals[:5]:
+    active_accepted = [
+        row for row in signals
+        if row.get("latest_decision") == "Accept" and not row.get("manual_closed")
+    ]
+    active_ids = {row["signal_id"] for row in active_accepted}
+    remaining = [row for row in signals if row["signal_id"] not in active_ids]
+    visible_signals = active_accepted + remaining[:max(0, 5 - len(active_accepted))]
+    for row in visible_signals:
         signal = row["payload"]
         plan = row.get("plan", {})
         sizing = plan.get("sizing", {})
         side = row["side"]
         side_class = "long" if side == "LONG" else "short"
-        decision = row.get("latest_decision") or "Pending"
+        manual_closed = bool(row.get("manual_closed"))
+        decision = "Closed manually" if manual_closed else (row.get("latest_decision") or "Pending")
         decision_class = decision.lower().replace(" ", "-")
+        decision_form = ""
+        track_form = ""
+        close_form = ""
+        if not manual_closed:
+            decision_form = f"""<form method="post" action="/decision" class="inline">
+                  <input type="hidden" name="signal_id" value="{html.escape(row['signal_id'])}">
+                  <button name="decision" value="Accept">Accept</button>
+                  <button name="decision" value="Watchlist" class="quiet">Watch</button>
+                  <button name="decision" value="Reject" class="quiet danger-text">Reject</button>
+                </form>"""
+        if decision == "Accept":
+            track_form = f"""<form method="post" action="/track-position" class="inline track-form">
+                  <input type="hidden" name="signal_id" value="{html.escape(row['signal_id'])}">
+                  <input name="quantity" value="{html.escape(str(round(float(sizing.get('quantityBase', 0)), 6))) if sizing else ''}" placeholder="qty">
+                  <button class="quiet">Track position</button>
+                </form>"""
+            close_form = f"""<form method="post" action="/close-accepted" class="inline close-form" onsubmit="return confirm('Xác nhận đóng thủ công signal này? Hệ thống chỉ cập nhật trạng thái, không gửi lệnh lên sàn.');">
+                  <input type="hidden" name="signal_id" value="{html.escape(row['signal_id'])}">
+                  <input type="number" min="0" step="any" name="close_price" placeholder="Giá đóng (tuỳ chọn)">
+                  <input name="note" placeholder="Lý do đóng (tuỳ chọn)">
+                  <button class="quiet danger-text">Đóng thủ công</button>
+                </form>"""
         partial_4r = float(signal["entryPrice"]) + float(signal["riskPerUnit"]) * 4
         if side == "SHORT":
             partial_4r = float(signal["entryPrice"]) - float(signal["riskPerUnit"]) * 4
@@ -486,17 +516,9 @@ def render_dashboard_signals(signals: list[dict]) -> str:
               <td><span class="decision {decision_class}">{html.escape(decision)}</span></td>
               <td>
                 <button type="button" class="quantity-button signal-quantity-button" data-symbol="{html.escape(row['symbol'])}" data-entry="{float(signal['entryPrice'])}" data-stop="{float(signal['initialStop'])}">Tính quantity</button>
-                <form method="post" action="/decision" class="inline">
-                  <input type="hidden" name="signal_id" value="{html.escape(row['signal_id'])}">
-                  <button name="decision" value="Accept">Accept</button>
-                  <button name="decision" value="Watchlist" class="quiet">Watch</button>
-                  <button name="decision" value="Reject" class="quiet danger-text">Reject</button>
-                </form>
-                <form method="post" action="/track-position" class="inline track-form">
-                  <input type="hidden" name="signal_id" value="{html.escape(row['signal_id'])}">
-                  <input name="quantity" value="{html.escape(str(round(float(sizing.get('quantityBase', 0)), 6))) if sizing else ''}" placeholder="qty">
-                  <button class="quiet">Track position</button>
-                </form>
+                {decision_form}
+                {track_form}
+                {close_form}
               </td>
             </tr>"""
         )
@@ -673,6 +695,15 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/track-position":
                 qty = form.get("quantity", "").strip()
                 store.track_position(form["signal_id"], float(qty) if qty else None)
+                self.redirect("/")
+                return
+            if self.path == "/close-accepted":
+                close_price = form.get("close_price", "").strip()
+                store.close_accepted_signal(
+                    form["signal_id"],
+                    form.get("note", ""),
+                    float(close_price) if close_price else None,
+                )
                 self.redirect("/")
                 return
             if self.path == "/followup-outcome":

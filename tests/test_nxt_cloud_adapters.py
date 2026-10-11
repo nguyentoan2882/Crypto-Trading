@@ -66,6 +66,10 @@ class FakeRepository:
         self.writes.append(("position", owner_user_id, payload, idempotency_key))
         return {"status": "tracked"}
 
+    def close_accepted_signal(self, owner_user_id, payload, idempotency_key):
+        self.writes.append(("manual-close", owner_user_id, payload, idempotency_key))
+        return {"status": "Acknowledged", "outcome": "Already Closed"}
+
     def record_followup_outcome(self, owner_user_id, recommendation_id, payload, idempotency_key):
         self.writes.append(("followup", owner_user_id, recommendation_id, payload, idempotency_key))
         return {"status": "Applied"}
@@ -286,6 +290,15 @@ class WebSecurityTests(unittest.TestCase):
         status, _, _ = wsgi_call(self.app, method="POST", path="/api/positions", token="ok", body={"signalId": "s", "quantity": 1, "entryPrice": 10})
         self.assertEqual(400, status)
 
+    def test_manual_close_route_is_authenticated_csrf_protected_and_idempotent(self):
+        cookie = "__Host-nxt_session=ok; nxt_csrf=abc"
+        headers = {"Origin": "https://nxt.example", "X-CSRF-Token": "abc", "Idempotency-Key": "manual-close-1"}
+        payload = {"signalId": "signal-1", "closePrice": 123.45, "note": "Closed by owner"}
+        status, _, body = wsgi_call(self.app, method="POST", path="/api/manual-close", body=payload, cookie=cookie, headers=headers)
+        self.assertEqual(200, status)
+        self.assertEqual("Already Closed", json.loads(body)["outcome"])
+        self.assertEqual(("manual-close", "owner-1", payload, "manual-close-1"), self.repo.writes[-1])
+
     def test_legacy_mutation_routes_do_not_exist(self):
         for path in ("/scan", "/equity", "/decision", "/track-position", "/followup-outcome"):
             self.assertEqual(404, wsgi_call(self.app, method="POST", path=path, token="ok", body={})[0])
@@ -402,6 +415,37 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("Applied", page)
         self.assertIn("Pending confirmation", page)
         self.assertIn("2 pending", page)
+
+    def test_dashboard_offers_manual_close_only_for_non_terminal_accepted_signal(self):
+        self.repo.dashboard_state = lambda _owner: {
+            "environment": "SHADOW",
+            "signals": [
+                {"signal_id": "open-1", "payload": {"id": "open-1", "symbol": "BTCUSDT", "side": "LONG", "entryPrice": 100, "initialStop": 90}},
+                {"signal_id": "closed-1", "payload": {"id": "closed-1", "symbol": "SOLUSDT", "side": "LONG", "entryPrice": 10, "initialStop": 9}},
+            ],
+            "decisions": [
+                {"signal_id": "open-1", "decision": "Accept"},
+                {"signal_id": "closed-1", "decision": "Accept"},
+            ],
+            "positions": [],
+            "scanRuns": [],
+            "followupRecommendations": [
+                {
+                    "signal_id": "closed-1",
+                    "action": "MANUAL_CLOSE",
+                    "status": "Acknowledged",
+                    "outcome": "Already Closed",
+                    "payload": {"signalId": "closed-1", "symbol": "SOLUSDT", "side": "LONG", "actionLabel": "DONG LENH THU CONG"},
+                }
+            ],
+        }
+        status, _, body = wsgi_call(self.app, path="/", token="ok")
+        self.assertEqual(200, status)
+        page = body.decode("utf-8")
+        self.assertIn('class="manual-close danger" data-signal-id="open-1"', page)
+        self.assertNotIn('class="manual-close danger" data-signal-id="closed-1"', page)
+        self.assertIn("Closed manually", page)
+        self.assertIn("DONG LENH THU CONG", page)
 
     def test_wsgi_app_serves_real_http_health_request(self):
         server = make_server("127.0.0.1", 0, self.app)
@@ -698,7 +742,31 @@ class PostgresAdapterContractTests(unittest.TestCase):
             repository.record_decision("owner-1", {"signalId": "s", "decision": "Execute"}, "idem")
         with self.assertRaises(ValueError):
             repository.track_position("owner-1", {"signalId": "s", "quantity": 0, "entryPrice": 10}, "idem")
+        with self.assertRaises(ValueError):
+            repository.close_accepted_signal("owner-1", {"signalId": "s", "closePrice": 0}, "idem")
         self.assertEqual([], cursor.executed)
+
+    def test_manual_close_updates_position_acknowledges_actions_and_creates_terminal_audit(self):
+        cursor = FakeCursor([
+            None,
+            {"signal_id": "signal-1", "symbol": "BTCUSDT", "side": "LONG"},
+            None,
+            {"position_id": "position-1"},
+            {"recommendation_id": "manual-close:signal-1"},
+        ])
+        repository = PostgresRepository("", pool=FakePool(cursor))
+        result = repository.close_accepted_signal(
+            "owner-1",
+            {"signalId": "signal-1", "closePrice": 105.5, "note": "Owner closed"},
+            "idem-close-1",
+        )
+        self.assertEqual("Already Closed", result["outcome"])
+        self.assertEqual("position-1", result["positionId"])
+        queries = [query for query, _ in cursor.executed]
+        self.assertTrue(any("FOR UPDATE" in query for query in queries))
+        self.assertTrue(any("UPDATE manual_positions" in query and "lifecycle='Closed'" in query for query in queries))
+        self.assertTrue(any("INSERT INTO followup_recommendations" in query and "'MANUAL_CLOSE'" in query for query in queries))
+        self.assertTrue(all("owner-1" not in query and "signal-1" not in query for query in queries))
 
     def test_followup_outcome_uses_local_status_and_outcome_model(self):
         cursor = FakeCursor([None, {"recommendation_id": "rec-1"}])

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -14,6 +14,10 @@ RULE_VERSION = "NXT v3.5 GuardDirectional_30_10At4R_60 legacy-entry-rule"
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def ict_today() -> str:
+    return datetime.now(timezone(timedelta(hours=7))).date().isoformat()
 
 
 def connect() -> sqlite3.Connection:
@@ -432,6 +436,128 @@ def track_position(signal_id: str, quantity: float | None = None) -> None:
         append_audit(conn, "position", position_id, "POSITION_TRACKED", {"signalId": signal_id, "quantity": qty})
 
 
+def close_accepted_signal(signal_id: str, note: str = "", close_price: float | None = None) -> dict:
+    """Manually close an accepted signal and any active tracked position.
+
+    This is a local bookkeeping action only. It never submits an exchange order.
+    """
+    init_db()
+    with connect() as conn:
+        signal_row = conn.execute(
+            "SELECT symbol, side FROM signals WHERE signal_id=?",
+            (signal_id,),
+        ).fetchone()
+        if not signal_row:
+            raise ValueError("Khong tim thay signal de dong.")
+
+        decision_row = conn.execute(
+            "SELECT decision FROM decisions WHERE signal_id=? ORDER BY created_at DESC, decision_id DESC LIMIT 1",
+            (signal_id,),
+        ).fetchone()
+        if not decision_row or decision_row["decision"] != "Accept":
+            raise ValueError("Chi co the dong signal co quyet dinh moi nhat la Accept.")
+
+        existing = conn.execute(
+            """
+            SELECT * FROM followup_recommendations
+            WHERE signal_id=? AND action='MANUAL_CLOSE' AND status='Acknowledged'
+              AND outcome='Already Closed'
+            ORDER BY outcome_at DESC, created_at DESC LIMIT 1
+            """,
+            (signal_id,),
+        ).fetchone()
+        if existing:
+            return dict(existing)
+
+        position = conn.execute(
+            """
+            SELECT position_id FROM manual_positions
+            WHERE signal_id=? AND lifecycle NOT IN ('Closed','Stopped','Rejected','Expired')
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            (signal_id,),
+        ).fetchone()
+        position_id = position["position_id"] if position else None
+        now = utc_now()
+        close_note = note.strip() or "Nguoi dung dong thu cong tren NXT local."
+        close_price_value = float(close_price) if close_price not in (None, "") else None
+        if close_price_value is not None and close_price_value <= 0:
+            raise ValueError("Gia dong phai lon hon 0.")
+        recommendation_id = f"manual-close:{signal_id}"
+        payload = {
+            "recommendationId": recommendation_id,
+            "signalId": signal_id,
+            "positionId": position_id,
+            "subjectType": "POSITION" if position_id else "SIGNAL",
+            "trackingStatus": "Closed manually",
+            "symbol": signal_row["symbol"],
+            "side": signal_row["side"],
+            "candleDate": ict_today(),
+            "action": "MANUAL_CLOSE",
+            "actionLabel": "DONG LENH THU CONG",
+            "status": "Acknowledged",
+            "priority": 0,
+            "rationale": close_note,
+            "stateVersion": "manual-close-v1",
+            "recommendationOnly": True,
+            "closedAt": now,
+            "closePrice": close_price_value,
+        }
+
+        conn.execute(
+            """
+            UPDATE followup_recommendations
+            SET status='Acknowledged', outcome='Already Closed', outcome_at=?
+            WHERE signal_id=? AND status IN ('Pending','Reminder')
+            """,
+            (now, signal_id),
+        )
+        if position_id:
+            conn.execute(
+                "UPDATE manual_positions SET lifecycle='Closed', updated_at=? WHERE position_id=?",
+                (now, position_id),
+            )
+        conn.execute(
+            """
+            INSERT INTO followup_recommendations(
+              recommendation_id, signal_id, position_id, subject_type, candle_date,
+              action, action_label, status, priority, rationale, state_version,
+              payload_json, created_at, outcome, outcome_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                recommendation_id,
+                signal_id,
+                position_id,
+                payload["subjectType"],
+                payload["candleDate"],
+                payload["action"],
+                payload["actionLabel"],
+                payload["status"],
+                payload["priority"],
+                payload["rationale"],
+                payload["stateVersion"],
+                _json(payload),
+                now,
+                "Already Closed",
+                now,
+            ),
+        )
+        append_audit(
+            conn,
+            "position" if position_id else "signal",
+            position_id or signal_id,
+            "ACCEPTED_SIGNAL_MANUALLY_CLOSED",
+            {"signalId": signal_id, "positionId": position_id, "closePrice": close_price_value, "note": close_note},
+        )
+        return dict(
+            conn.execute(
+                "SELECT * FROM followup_recommendations WHERE recommendation_id=?",
+                (recommendation_id,),
+            ).fetchone()
+        )
+
+
 def create_recommendation(conn: sqlite3.Connection, position_id: str, candle_date: str, action: str, priority: int, rationale: str, payload: object) -> None:
     conn.execute(
         """
@@ -473,7 +599,7 @@ def accepted_monitor_subjects() -> list[dict]:
               WHERE terminal.signal_id=s.signal_id
                 AND terminal.status='Acknowledged'
                 AND terminal.outcome IN ('Applied','Already Closed')
-                AND terminal.action IN ('STOP_LOSS','BE_STOP','TAIL_EXIT_EMA50','TAIL_EXIT_SSL')
+                AND terminal.action IN ('STOP_LOSS','BE_STOP','TAIL_EXIT_EMA50','TAIL_EXIT_SSL','MANUAL_CLOSE')
             )
             ORDER BY s.signal_date, s.symbol
             """,
@@ -615,7 +741,12 @@ def dashboard_state() -> dict:
             conn,
             """
             SELECT s.*, tp.status AS plan_status, tp.payload_json AS plan_json,
-                   (SELECT decision FROM decisions d WHERE d.signal_id=s.signal_id ORDER BY d.created_at DESC LIMIT 1) AS latest_decision
+                   (SELECT decision FROM decisions d WHERE d.signal_id=s.signal_id ORDER BY d.created_at DESC LIMIT 1) AS latest_decision,
+                   EXISTS(
+                     SELECT 1 FROM followup_recommendations fr
+                     WHERE fr.signal_id=s.signal_id AND fr.action='MANUAL_CLOSE'
+                       AND fr.status='Acknowledged' AND fr.outcome='Already Closed'
+                   ) AS manual_closed
             FROM signals s
             LEFT JOIN trade_plans tp ON tp.signal_id=s.signal_id AND tp.version=1
             ORDER BY s.signal_date DESC, s.symbol ASC

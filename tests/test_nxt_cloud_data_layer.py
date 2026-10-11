@@ -47,7 +47,7 @@ class MigrationContractTests(unittest.TestCase):
 
     def test_migration_inventory_is_contiguous_and_checksummed(self):
         found = migration_files(ROOT / "cloud" / "migrations")
-        self.assertEqual([1, 2, 3], [version for version, _, _ in found])
+        self.assertEqual([1, 2, 3, 4], [version for version, _, _ in found])
         self.assertRegex(found[0][2], r"^[0-9a-f]{64}$")
         outcome_sql = found[1][1].read_text(encoding="utf-8")
         self.assertIn("ADD COLUMN outcome text", outcome_sql)
@@ -56,6 +56,8 @@ class MigrationContractTests(unittest.TestCase):
         self.assertIn("f.action NOT IN ('NO_ACTION', 'DATA_STALE', 'NEEDS_REVIEW')", monitor_sql)
         self.assertIn("terminal.outcome IN ('Applied', 'Already Closed')", monitor_sql)
         self.assertIn("terminal.action IN ('STOP_LOSS', 'BE_STOP', 'TAIL_EXIT_EMA50', 'TAIL_EXIT_SSL')", monitor_sql)
+        manual_close_sql = found[3][1].read_text(encoding="utf-8")
+        self.assertIn("'TAIL_EXIT_SSL', 'MANUAL_CLOSE'", manual_close_sql)
 
 
 class CopyOnlyImporterTests(unittest.TestCase):

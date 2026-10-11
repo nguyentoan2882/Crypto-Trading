@@ -4,10 +4,12 @@ import json
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
-REQUIRED_SCHEMA_VERSION = 2
+REQUIRED_SCHEMA_VERSION = 4
 LIST_QUERIES = {
     "signals": "SELECT signal_id, symbol, side, signal_type, signal_date, payload, created_at FROM signals WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY signal_date DESC, created_at DESC LIMIT %s OFFSET %s",
     "scans": "SELECT run_id, candle_date, status, source, input_hash, rule_version, started_at, finished_at, errors_json FROM scan_runs WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY started_at DESC LIMIT %s OFFSET %s",
@@ -155,6 +157,133 @@ class PostgresRepository:
                 (position_id, owner_user_id, str(payload["signalId"]), entry_price, quantity),
             )
             response = {"positionId": position_id, "status": "tracked"}
+            self._save_idempotent(cur, owner_user_id, idempotency_key, operation, response)
+            return response
+
+    def close_accepted_signal(self, owner_user_id: str, payload: Mapping[str, object], idempotency_key: str) -> Mapping[str, object]:
+        operation = "manual-close"
+        signal_id = str(payload["signalId"]).strip()
+        note = str(payload.get("note", "")).strip()
+        raw_close_price = payload.get("closePrice")
+        close_price = None if raw_close_price in (None, "") else float(raw_close_price)
+        if not signal_id:
+            raise ValueError("signalId is required")
+        if close_price is not None and close_price <= 0:
+            raise ValueError("closePrice must be positive")
+        if len(note) > 500:
+            raise ValueError("note must be 500 characters or fewer")
+
+        with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
+            self._lock_idempotency(cur, owner_user_id, idempotency_key, operation)
+            prior = self._existing_idempotent(cur, owner_user_id, idempotency_key, operation)
+            if prior:
+                return prior
+            cur.execute(
+                """
+                SELECT s.signal_id, s.symbol, s.side
+                FROM signals s
+                WHERE s.environment='SHADOW' AND s.owner_user_id=%s AND s.signal_id=%s
+                  AND (SELECT d.decision FROM decisions d
+                       WHERE d.environment=s.environment AND d.owner_user_id=s.owner_user_id
+                         AND d.signal_id=s.signal_id
+                       ORDER BY d.created_at DESC, d.decision_id DESC LIMIT 1)='Accept'
+                FOR UPDATE
+                """,
+                (owner_user_id, signal_id),
+            )
+            signal = cur.fetchone()
+            if not signal:
+                raise ValueError("accepted signal not found")
+
+            recommendation_id = f"manual-close:{signal_id}"
+            cur.execute(
+                """
+                SELECT recommendation_id, position_id, outcome_at
+                FROM followup_recommendations
+                WHERE environment='SHADOW' AND owner_user_id=%s AND signal_id=%s
+                  AND action='MANUAL_CLOSE' AND status='Acknowledged' AND outcome='Already Closed'
+                LIMIT 1
+                """,
+                (owner_user_id, signal_id),
+            )
+            existing = cur.fetchone()
+            if existing:
+                response = {
+                    "recommendationId": existing["recommendation_id"],
+                    "positionId": existing.get("position_id"),
+                    "status": "Acknowledged",
+                    "outcome": "Already Closed",
+                }
+                self._save_idempotent(cur, owner_user_id, idempotency_key, operation, response)
+                return response
+
+            cur.execute(
+                """
+                SELECT position_id FROM manual_positions
+                WHERE environment='SHADOW' AND owner_user_id=%s AND signal_id=%s
+                  AND lifecycle NOT IN ('Closed','Stopped','Rejected','Expired')
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (owner_user_id, signal_id),
+            )
+            position = cur.fetchone()
+            position_id = position.get("position_id") if position else None
+            candle_date = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date().isoformat()
+            close_note = note or "Nguoi dung dong thu cong tren NXT Cloud."
+            close_payload = {
+                "recommendationId": recommendation_id,
+                "signalId": signal_id,
+                "positionId": position_id,
+                "subjectType": "POSITION" if position_id else "SIGNAL",
+                "trackingStatus": "Closed manually",
+                "symbol": signal["symbol"],
+                "side": signal["side"],
+                "candleDate": candle_date,
+                "action": "MANUAL_CLOSE",
+                "actionLabel": "DONG LENH THU CONG",
+                "status": "Acknowledged",
+                "priority": 0,
+                "rationale": close_note,
+                "stateVersion": "manual-close-v1",
+                "recommendationOnly": True,
+                "closePrice": close_price,
+            }
+            cur.execute(
+                """
+                UPDATE followup_recommendations
+                SET status='Acknowledged', outcome='Already Closed', outcome_at=now()
+                WHERE environment='SHADOW' AND owner_user_id=%s AND signal_id=%s
+                  AND status IN ('Pending','Reminder')
+                """,
+                (owner_user_id, signal_id),
+            )
+            cur.execute(
+                """
+                UPDATE manual_positions
+                SET lifecycle='Closed', updated_at=now(),
+                    payload=payload || %s::jsonb
+                WHERE environment='SHADOW' AND owner_user_id=%s AND signal_id=%s
+                  AND lifecycle NOT IN ('Closed','Stopped','Rejected','Expired')
+                """,
+                (_json({"manualClose": {"closePrice": close_price, "note": close_note}}), owner_user_id, signal_id),
+            )
+            cur.execute(
+                """
+                INSERT INTO followup_recommendations(
+                    recommendation_id, environment, owner_user_id, signal_id, position_id,
+                    candle_date, action, priority, status, outcome, payload, outcome_at
+                ) VALUES (%s,'SHADOW',%s,%s,%s,%s,'MANUAL_CLOSE',0,'Acknowledged','Already Closed',%s::jsonb,now())
+                RETURNING recommendation_id
+                """,
+                (recommendation_id, owner_user_id, signal_id, position_id, candle_date, _json(close_payload)),
+            )
+            cur.fetchone()
+            response = {
+                "recommendationId": recommendation_id,
+                "positionId": position_id,
+                "status": "Acknowledged",
+                "outcome": "Already Closed",
+            }
             self._save_idempotent(cur, owner_user_id, idempotency_key, operation, response)
             return response
 
