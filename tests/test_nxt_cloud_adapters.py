@@ -447,6 +447,21 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("Closed manually", page)
         self.assertIn("DONG LENH THU CONG", page)
 
+    def test_dashboard_keeps_manual_close_status_after_audit_is_outside_recent_followups(self):
+        self.repo.dashboard_state = lambda _owner: {
+            "environment": "SHADOW",
+            "signals": [{"signal_id": "closed-1", "manual_closed": True, "terminal_closed": True,
+                         "payload": {"id": "closed-1", "symbol": "BNBUSDT", "side": "SHORT",
+                                     "entryPrice": 735.78, "initialStop": 769.18}}],
+            "decisions": [{"signal_id": "closed-1", "decision": "Accept"}],
+            "positions": [], "scanRuns": [], "followupRecommendations": [],
+        }
+        status, _, body = wsgi_call(self.app, path="/", token="ok")
+        self.assertEqual(200, status)
+        page = body.decode("utf-8")
+        self.assertIn("Closed manually", page)
+        self.assertNotIn('class="manual-close danger" data-signal-id="closed-1"', page)
+
     def test_wsgi_app_serves_real_http_health_request(self):
         server = make_server("127.0.0.1", 0, self.app)
         thread = threading.Thread(target=server.handle_request, daemon=True)
@@ -723,6 +738,19 @@ class PostgresAdapterContractTests(unittest.TestCase):
         self.assertEqual("rec-1", normalized["recommendation_id"])
         self.assertEqual("MOVE_STOP_TO_BE", normalized["action"])
         self.assertEqual(pending, normalized["payload"])
+
+    def test_monitor_and_followup_writes_exclude_terminal_signals_even_with_stale_view(self):
+        cursor = FakeCursor(fetchall_values=[])
+        repository = PostgresRepository("", pool=FakePool(cursor))
+        repository.accepted_monitor_subjects("SHADOW")
+        repository.persist_followup_recommendations("SHADOW", [{
+            "recommendationId": "rec-1", "signalId": "signal-1", "positionId": None,
+            "candleDate": "2026-10-20", "action": "NO_ACTION", "priority": 99,
+            "status": "Informational",
+        }])
+        queries = [query for query, _ in cursor.executed]
+        self.assertEqual(2, len(queries))
+        self.assertTrue(all("NOT EXISTS" in query and "'MANUAL_CLOSE'" in query for query in queries))
 
     def test_decision_write_uses_transaction_lock_and_parameters(self):
         cursor = FakeCursor([None])

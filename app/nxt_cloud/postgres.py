@@ -11,7 +11,16 @@ from zoneinfo import ZoneInfo
 
 REQUIRED_SCHEMA_VERSION = 4
 LIST_QUERIES = {
-    "signals": "SELECT signal_id, symbol, side, signal_type, signal_date, payload, created_at FROM signals WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY signal_date DESC, created_at DESC LIMIT %s OFFSET %s",
+    "signals": """SELECT s.signal_id, s.symbol, s.side, s.signal_type, s.signal_date, s.payload, s.created_at,
+        EXISTS (SELECT 1 FROM followup_recommendations f WHERE f.environment=s.environment
+            AND f.owner_user_id=s.owner_user_id AND f.signal_id=s.signal_id
+            AND f.action='MANUAL_CLOSE' AND f.status='Acknowledged' AND f.outcome='Already Closed') AS manual_closed,
+        EXISTS (SELECT 1 FROM followup_recommendations f WHERE f.environment=s.environment
+            AND f.owner_user_id=s.owner_user_id AND f.signal_id=s.signal_id
+            AND f.action IN ('STOP_LOSS','BE_STOP','TAIL_EXIT_EMA50','TAIL_EXIT_SSL','MANUAL_CLOSE')
+            AND f.status='Acknowledged' AND f.outcome IN ('Applied','Already Closed')) AS terminal_closed
+        FROM signals s WHERE s.environment='SHADOW' AND s.owner_user_id=%s
+        ORDER BY s.signal_date DESC, s.created_at DESC LIMIT %s OFFSET %s""",
     "scans": "SELECT run_id, candle_date, status, source, input_hash, rule_version, started_at, finished_at, errors_json FROM scan_runs WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY started_at DESC LIMIT %s OFFSET %s",
     "followups": "SELECT recommendation_id, signal_id, position_id, candle_date, action, priority, status, outcome, payload, created_at FROM followup_recommendations WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY candle_date DESC, priority, created_at DESC LIMIT %s OFFSET %s",
     "decisions": "SELECT DISTINCT ON (signal_id) decision_id, signal_id, decision, note, created_at FROM decisions WHERE environment = 'SHADOW' AND owner_user_id = %s ORDER BY signal_id, created_at DESC, decision_id DESC LIMIT %s OFFSET %s",
@@ -335,7 +344,16 @@ class PostgresRepository:
     def accepted_monitor_subjects(self, environment: str) -> Sequence[Mapping[str, object]]:
         with self._connection() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT signal_id, symbol, signal_payload AS signal, plan_payload AS plan, position_id, position_payload AS position, acknowledged_actions AS \"acknowledgedActions\", pending_followup AS \"pendingFollowup\" FROM accepted_monitor_subjects WHERE environment = %s",
+                """SELECT v.signal_id, v.symbol, v.signal_payload AS signal, v.plan_payload AS plan,
+                    v.position_id, v.position_payload AS position,
+                    v.acknowledged_actions AS "acknowledgedActions", v.pending_followup AS "pendingFollowup"
+                FROM accepted_monitor_subjects v
+                WHERE v.environment = %s AND NOT EXISTS (
+                    SELECT 1 FROM followup_recommendations terminal
+                    WHERE terminal.environment=v.environment AND terminal.signal_id=v.signal_id
+                      AND terminal.status='Acknowledged' AND terminal.outcome IN ('Applied','Already Closed')
+                      AND terminal.action IN ('STOP_LOSS','BE_STOP','TAIL_EXIT_EMA50','TAIL_EXIT_SSL','MANUAL_CLOSE')
+                )""",
                 (environment,),
             )
             subjects = list(cur.fetchall())
@@ -379,7 +397,15 @@ class PostgresRepository:
         with self._connection() as conn, conn.transaction(), conn.cursor() as cur:
             for item in items:
                 cur.execute(
-                    "INSERT INTO followup_recommendations(recommendation_id, environment, owner_user_id, signal_id, position_id, candle_date, action, priority, status, payload) SELECT %s,%s,s.owner_user_id,%s,%s,%s,%s,%s,%s,%s::jsonb FROM signals s WHERE s.environment=%s AND s.signal_id=%s ON CONFLICT (environment, recommendation_id) DO NOTHING",
+                    """INSERT INTO followup_recommendations(recommendation_id, environment, owner_user_id, signal_id, position_id, candle_date, action, priority, status, payload)
+                    SELECT %s,%s,s.owner_user_id,%s,%s,%s,%s,%s,%s,%s::jsonb
+                    FROM signals s WHERE s.environment=%s AND s.signal_id=%s
+                    AND NOT EXISTS (
+                        SELECT 1 FROM followup_recommendations terminal
+                        WHERE terminal.environment=s.environment AND terminal.signal_id=s.signal_id
+                          AND terminal.status='Acknowledged' AND terminal.outcome IN ('Applied','Already Closed')
+                          AND terminal.action IN ('STOP_LOSS','BE_STOP','TAIL_EXIT_EMA50','TAIL_EXIT_SSL','MANUAL_CLOSE')
+                    ) ON CONFLICT (environment, recommendation_id) DO NOTHING""",
                     (item["recommendationId"], environment, item["signalId"], item.get("positionId"), item["candleDate"], item["action"], item["priority"], item["status"], _json(item), environment, item["signalId"]),
                 )
 
